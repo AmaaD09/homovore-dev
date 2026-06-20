@@ -57,7 +57,7 @@ public class PhaseModule extends Module {
             try (var handler = ((ClientLevelAccessor) mc.level).homovore$getBlockStatePredictionHandler().startPredicting()) {
                 mc.getConnection().send(new ServerboundUseItemPacket(r.hand(), handler.currentSequence(), yaw, pitch));
             }
-        }));
+        }, true));
 
         disable();
     }
