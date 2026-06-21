@@ -2,6 +2,7 @@ package dev.leonetic.features.gui.items;
 
 import dev.leonetic.features.Feature;
 import dev.leonetic.util.render.GuiFade;
+import dev.leonetic.util.render.font.Fonts;
 import net.minecraft.client.gui.GuiGraphics;
 
 import java.awt.*;
@@ -85,7 +86,7 @@ public class Item
     private long scrollStartTime = 0;
 
     protected void drawScrollableString(String text, double x, double y, int color, int maxWidth, boolean isHovering) {
-        int textWidth = mc.font.width(text);
+        int textWidth = Fonts.width(text);
         if (textWidth <= maxWidth) {
             scrollStartTime = 0;
             drawString(text, x, y, color);
@@ -113,19 +114,19 @@ public class Item
         } else {
             offset = overflow - (t - pause - scrollDurationMs - pause) * 0.03f;
         }
-        context.enableScissor((int) x, (int) y - 2, (int) (x + maxWidth + 2), (int) (y + mc.font.lineHeight + 2));
+        context.enableScissor((int) x, (int) y - 2, (int) (x + maxWidth + 2), (int) (y + Fonts.lineHeight() + 2));
         drawString(text, x - offset, y, color);
         context.disableScissor();
     }
 
     private String truncateText(String text, int maxWidth) {
         String ellipsis = "...";
-        int ellipsisWidth = mc.font.width(ellipsis);
+        int ellipsisWidth = Fonts.width(ellipsis);
         if (maxWidth <= ellipsisWidth) return ellipsis;
         int targetWidth = maxWidth - ellipsisWidth;
         StringBuilder sb = new StringBuilder();
         for (char c : text.toCharArray()) {
-            if (mc.font.width(sb.toString() + c) > targetWidth) break;
+            if (Fonts.width(sb.toString() + c) > targetWidth) break;
             sb.append(c);
         }
         return sb + ellipsis;
@@ -136,7 +137,7 @@ public class Item
     }
 
     protected void drawString(String text, double x, double y, int color) {
-        context.drawString(mc.font, text, (int) x, (int) y, GuiFade.apply(color));
+        Fonts.drawString(context, text, (float) x, (float) y, GuiFade.apply(color));
     }
 
     public boolean isHovering(int mouseX, int mouseY) {

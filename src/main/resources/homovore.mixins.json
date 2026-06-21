@@ -10,6 +10,8 @@
   "client": [
     "client.ChatComponentAccessor",
     "client.MixinChatComponent",
+    "client.MixinGuiGraphics",
+    "client.MixinFont",
     "client.MixinAbstractContainerScreen",
     "client.OptionInstanceAccessor",
     "client.MixinOptions",

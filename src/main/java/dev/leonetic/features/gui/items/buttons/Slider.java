@@ -6,6 +6,7 @@ import dev.leonetic.features.gui.Widget;
 import dev.leonetic.features.gui.items.TextBox;
 import dev.leonetic.features.settings.Setting;
 import dev.leonetic.util.render.RenderUtil;
+import dev.leonetic.util.render.font.Fonts;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
 import org.lwjgl.glfw.GLFW;
@@ -68,7 +69,7 @@ public class Slider extends SettingButton<Number> {
             valueLeft = textBox.renderInlineRight(context, valueRight, centerY, GuiTheme.TEXT_MODULE_ON);
         } else {
             String value = ChatFormatting.GRAY + formatCurrentValue();
-            int valWidth = mc.font.width(value);
+            int valWidth = Fonts.width(value);
             drawString(value, valueRight - valWidth, labelY, valueColor);
             valueLeft = valueRight - valWidth;
         }

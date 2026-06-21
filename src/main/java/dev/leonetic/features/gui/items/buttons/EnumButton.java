@@ -3,6 +3,7 @@ package dev.leonetic.features.gui.items.buttons;
 import dev.leonetic.features.gui.GuiTheme;
 import dev.leonetic.features.settings.Setting;
 import dev.leonetic.util.render.RenderUtil;
+import dev.leonetic.util.render.font.Fonts;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
@@ -26,7 +27,7 @@ public class EnumButton extends SettingButton<Enum<?>> {
         }
         float ty = this.y + (this.height - 8) / 2f;
         String val = ChatFormatting.GRAY + this.setting.currentEnumName();
-        int w = mc.font.width(val);
+        int w = Fonts.width(val);
         drawString(val, this.x + this.width - w - 3f, ty, GuiTheme.TEXT_SETTING_VALUE);
         int labelMax = Math.max(0, this.width - w - 8);
         drawScrollableString(this.setting.getName(), this.x + 2f, ty, GuiTheme.TEXT_SETTING, labelMax, hovering);

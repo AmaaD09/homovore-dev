@@ -486,12 +486,11 @@ public class PlacementManager extends Feature {
         }
 
         float[] angles = MathUtil.calcAngle(eye, hitVec);
-        Homovore.rotationManager.submit(new RotationRequest("AutoCrystal_place", 60, angles[0], angles[1], RotationRequest.Mode.SILENT));
 
         AABB baseBox = new AABB(base);
         boolean insideBox = baseBox.contains(eye);
         if (!insideBox) {
-            Vec3 look = getLookVector(Homovore.rotationManager.getServerYaw(), Homovore.rotationManager.getServerPitch());
+            Vec3 look = getLookVector(angles[0], angles[1]);
             Vec3 reachEnd = eye.add(look.scale(6.0));
             if (baseBox.clip(eye, reachEnd).isEmpty()) return false;
         }

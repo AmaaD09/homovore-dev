@@ -4,6 +4,7 @@ import dev.leonetic.features.gui.GuiTheme;
 import dev.leonetic.features.settings.Bind;
 import dev.leonetic.features.settings.Setting;
 import dev.leonetic.util.render.RenderUtil;
+import dev.leonetic.util.render.font.Fonts;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
@@ -34,7 +35,7 @@ public class BindButton extends SettingButton<Bind> {
         } else {
             String str = ChatFormatting.GRAY + this.setting.getValue().toString().toUpperCase()
                     .replace("KEY.KEYBOARD", "").replace(".", " ").trim();
-            int w = mc.font.width(str);
+            int w = Fonts.width(str);
             drawString(str, this.x + this.width - w - 3f, ty, GuiTheme.TEXT_SETTING_VALUE);
             int labelMax = Math.max(0, this.width - w - 8);
             drawScrollableString(this.setting.getName(), this.x + 2f, ty, GuiTheme.TEXT_SETTING, labelMax, hovering);

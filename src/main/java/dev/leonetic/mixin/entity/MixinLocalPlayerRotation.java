@@ -1,6 +1,7 @@
 package dev.leonetic.mixin.entity;
 
 import dev.leonetic.Homovore;
+import dev.leonetic.manager.RotationManager;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
 import org.spongepowered.asm.mixin.Mixin;
@@ -15,54 +16,60 @@ import static dev.leonetic.util.traits.Util.mc;
 @Mixin(value = LocalPlayer.class, priority = Integer.MAX_VALUE)
 public class MixinLocalPlayerRotation {
     @Shadow private float xRotLast;
-    @Unique private float origSilentXRot;
-    @Unique private float origMotionYRot, origMotionXRot;
+
+    @Unique private float homovore$savedYaw, homovore$savedPitch;
+    @Unique private boolean homovore$spoofed;
 
     @Inject(method = "sendPosition", at = @At("HEAD"))
-    private void onSendPositionMotionHead(CallbackInfo ci) {
-        if (Homovore.rotationManager == null || !Homovore.rotationManager.isRotating()) return;
+    private void homovore$spoofRotationHead(CallbackInfo ci) {
+        homovore$spoofed = false;
+        RotationManager rm = Homovore.rotationManager;
+        if (rm == null) return;
 
-        origMotionYRot = mc.player.getYRot();
-        origMotionXRot = mc.player.getXRot();
+        boolean motion = rm.isRotating();
+        boolean silent = rm.isSilentSyncRequired();
+        if (!motion && !silent) return;
 
-        float newYaw = Homovore.rotationManager.getRotationYaw();
-        float newPitch = Homovore.rotationManager.getRotationPitch();
-        mc.player.setYRot(newYaw);
-        mc.player.setXRot(newPitch);
+        homovore$savedYaw = mc.player.getYRot();
+        homovore$savedPitch = mc.player.getXRot();
 
-        float deltaYaw = newYaw - Homovore.rotationManager.getServerYaw();
-        Homovore.rotationManager.setServerDeltaYaw(deltaYaw);
-        Homovore.rotationManager.setServerYaw(newYaw);
-        Homovore.rotationManager.setServerPitch(newPitch);
+        float outYaw = homovore$savedYaw;
+        float outPitch = homovore$savedPitch;
+
+        if (motion) {
+            outYaw = rm.getRotationYaw();
+            outPitch = rm.getRotationPitch();
+            rm.setServerDeltaYaw(outYaw - rm.getServerYaw());
+            rm.setServerYaw(outYaw);
+            rm.setServerPitch(outPitch);
+        } else {
+            xRotLast -= 4;
+            float f = (float) ((Math.random() * 2.0 - 1.0) * 0.001f);
+            outPitch = Mth.clamp(outPitch + f, -90.0f, 90.0f);
+        }
+
+        mc.player.setYRot(outYaw);
+        mc.player.setXRot(outPitch);
+        homovore$spoofed = true;
     }
 
     @Inject(method = "sendPosition", at = @At("TAIL"))
-    private void onSendPositionMotionTail(CallbackInfo ci) {
+    private void homovore$spoofRotationTail(CallbackInfo ci) {
+        RotationManager rm = Homovore.rotationManager;
+        if (rm == null) return;
 
-        if (Homovore.rotationManager == null || !Homovore.rotationManager.isRotating()) return;
+        if (rm.isRotating()) {
+            rm.setServerYaw(mc.player.getYRot());
+            rm.setServerPitch(mc.player.getXRot());
+        }
 
-        Homovore.rotationManager.setServerYaw(mc.player.getYRot());
-        Homovore.rotationManager.setServerPitch(mc.player.getXRot());
+        if (homovore$spoofed) {
+            mc.player.setYRot(homovore$savedYaw);
+            mc.player.setXRot(homovore$savedPitch);
+            homovore$spoofed = false;
+        }
 
-        mc.player.setYRot(origMotionYRot);
-        mc.player.setXRot(origMotionXRot);
-    }
-
-    @Inject(method = "sendPosition", at = @At("HEAD"))
-    private void onSendPositionHead(CallbackInfo ci) {
-        if (Homovore.rotationManager == null || !Homovore.rotationManager.isSilentSyncRequired()) return;
-
-        origSilentXRot = mc.player.getXRot();
-        xRotLast -= 4;
-        float f = (float) ((Math.random() * 2.0 - 1.0) * 0.001f);
-        mc.player.setXRot(Mth.clamp(origSilentXRot + f, -90.0f, 90.0f));
-    }
-
-    @Inject(method = "sendPosition", at = @At("RETURN"))
-    private void onSendPositionReturn(CallbackInfo ci) {
-        if (Homovore.rotationManager == null || !Homovore.rotationManager.isSilentSyncRequired()) return;
-
-        mc.player.setXRot(origSilentXRot);
-        Homovore.rotationManager.setSilentSyncRequired(false);
+        rm.setSilentSyncRequired(false);
+        rm.resetSilentTick();
     }
 }

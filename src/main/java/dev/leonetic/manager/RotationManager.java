@@ -34,6 +34,8 @@ public class RotationManager {
     private float serverDeltaYaw;
 
     private boolean silentSyncRequired;
+    private boolean silentSentThisTick;
+    private int silentSentPriority;
     private long lastSilentMs;
 
     private final List<RotationRequest> requests = new ArrayList<>();
@@ -48,7 +50,10 @@ public class RotationManager {
 
     public void submit(RotationRequest request) {
         if (request.mode == RotationRequest.Mode.SILENT) {
+            if (silentSentThisTick && request.priority <= silentSentPriority) return;
             performSilent(request);
+            silentSentThisTick = true;
+            silentSentPriority = request.priority;
             silentSyncRequired = true;
             lastSilentMs = System.currentTimeMillis();
             return;
@@ -287,6 +292,8 @@ public class RotationManager {
 
     public boolean isSilentSyncRequired() { return silentSyncRequired; }
     public void setSilentSyncRequired(boolean required) { silentSyncRequired = required; }
+
+    public void resetSilentTick() { silentSentThisTick = false; }
     public boolean isSilentActive() { return System.currentTimeMillis() - lastSilentMs < 500; }
 
     private static float yawDifference(float target, float current) {

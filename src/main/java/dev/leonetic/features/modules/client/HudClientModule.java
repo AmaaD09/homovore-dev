@@ -62,8 +62,13 @@ public class HudClientModule extends Module {
     public void onRender2D(Render2DEvent event) {
         if (nullCheck()) return;
         if (mc.options.hideGui) return;
-        for (Map.Entry<HudModule, Setting<Boolean>> entry : elements.entrySet()) {
-            if (entry.getValue().getValue()) entry.getKey().render(event);
+        dev.leonetic.util.render.font.Fonts.beginHudPass();
+        try {
+            for (Map.Entry<HudModule, Setting<Boolean>> entry : elements.entrySet()) {
+                if (entry.getValue().getValue()) entry.getKey().render(event);
+            }
+        } finally {
+            dev.leonetic.util.render.font.Fonts.endHudPass();
         }
     }
 }

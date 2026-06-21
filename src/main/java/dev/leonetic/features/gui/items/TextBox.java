@@ -3,6 +3,7 @@ package dev.leonetic.features.gui.items;
 import dev.leonetic.features.gui.GuiTheme;
 import dev.leonetic.util.render.GuiFade;
 import dev.leonetic.util.render.RenderUtil;
+import dev.leonetic.util.render.font.Fonts;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
@@ -98,13 +99,13 @@ public class TextBox {
         } else {
             String shown = buffer.toString();
             drawString(ctx, shown, textX, textY, textColor);
-            drawCaret(ctx, textX + mc.font.width(shown), textY, textColor);
+            drawCaret(ctx, textX + Fonts.width(shown), textY, textColor);
         }
     }
 
     public float renderInlineRight(GuiGraphics ctx, float rightX, float centerY, int color) {
         String shown = buffer.toString();
-        int w = mc.font.width(shown);
+        int w = Fonts.width(shown);
         float textX = rightX - w;
         float textY = centerY - 4f;
         drawString(ctx, shown, textX, textY, color);
@@ -153,6 +154,6 @@ public class TextBox {
     }
 
     private void drawString(GuiGraphics ctx, String text, float x, float y, int color) {
-        ctx.drawString(mc.font, text, (int) x, (int) y, GuiFade.apply(color));
+        Fonts.drawString(ctx, text, x, y, GuiFade.apply(color));
     }
 }

@@ -4,6 +4,7 @@ import dev.leonetic.features.gui.GuiTheme;
 import dev.leonetic.features.gui.Widget;
 import dev.leonetic.features.gui.items.TextBox;
 import dev.leonetic.features.settings.Setting;
+import dev.leonetic.util.render.font.Fonts;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
 
@@ -41,7 +42,7 @@ public class StringButton extends SettingButton<String> {
         } else {
             float ty = this.y + (this.height - 8) / 2f;
             String val = ChatFormatting.GRAY + this.setting.getValue();
-            int w = mc.font.width(val);
+            int w = Fonts.width(val);
             if (hovering) {
                 textBox.renderPill(context, x1, y1, x2, y2, accent, true, 3f);
             }

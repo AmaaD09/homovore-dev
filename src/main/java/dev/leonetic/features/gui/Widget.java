@@ -8,6 +8,7 @@ import dev.leonetic.features.modules.client.ClickGuiModule;
 import dev.leonetic.util.render.GuiFade;
 import dev.leonetic.util.render.RenderUtil;
 import dev.leonetic.util.render.ScissorUtil;
+import dev.leonetic.util.render.font.Fonts;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.sounds.SoundEvents;
@@ -279,20 +280,20 @@ public class Widget extends Feature {
     }
 
     private String truncateText(String text, int maxWidth) {
-        if (mc.font.width(text) <= maxWidth) return text;
+        if (Fonts.width(text) <= maxWidth) return text;
         String ellipsis = "...";
-        int ellipsisWidth = mc.font.width(ellipsis);
+        int ellipsisWidth = Fonts.width(ellipsis);
         if (maxWidth <= ellipsisWidth) return ellipsis;
         int targetWidth = maxWidth - ellipsisWidth;
         StringBuilder sb = new StringBuilder();
         for (char c : text.toCharArray()) {
-            if (mc.font.width(sb.toString() + c) > targetWidth) break;
+            if (Fonts.width(sb.toString() + c) > targetWidth) break;
             sb.append(c);
         }
         return sb + ellipsis;
     }
 
     protected void drawString(String text, double x, double y, int color) {
-        context.drawString(mc.font, text, (int) x, (int) y, GuiFade.apply(color));
+        Fonts.drawString(context, text, (float) x, (float) y, GuiFade.apply(color));
     }
 }

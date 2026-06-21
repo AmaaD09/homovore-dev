@@ -9,6 +9,7 @@ import dev.leonetic.features.modules.Module;
 import dev.leonetic.features.modules.client.ClickGuiModule;
 import dev.leonetic.features.settings.Setting;
 import dev.leonetic.util.render.RenderUtil;
+import dev.leonetic.util.render.font.Fonts;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.sounds.SoundEvents;
@@ -246,7 +247,7 @@ public class ModuleButton extends Button {
         drawString("<", left + 2f, textY, prevColor);
         drawString(">", right - 6f, textY, nextColor);
 
-        int tw = mc.font.width(page);
+        int tw = Fonts.width(page);
         drawString(page, this.x + (this.width - tw) / 2f, textY, GuiTheme.TEXT_SETTING_VALUE);
     }
 

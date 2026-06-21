@@ -5,6 +5,7 @@ import dev.leonetic.features.gui.HomovoreGui;
 import dev.leonetic.features.gui.Widget;
 import dev.leonetic.features.settings.Setting;
 import dev.leonetic.util.render.RenderUtil;
+import dev.leonetic.util.render.font.Fonts;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.sounds.SoundEvents;
@@ -145,13 +146,13 @@ public class ColorButton extends SettingButton<Color> {
         RenderUtil.rect(context, pickerX, this.y + yOffset, pickerX + buttonWidth, this.y + yOffset + BTN_HEIGHT,
                 hoveringCopy ? activeBg : idleBg);
         RenderUtil.rect(context, pickerX, this.y + yOffset, pickerX + buttonWidth, this.y + yOffset + BTN_HEIGHT, outlineColor, 1f);
-        drawString("Copy", pickerX + buttonWidth / 2.0 - mc.font.width("Copy") / 2.0, textY, GuiTheme.TEXT_SETTING);
+        drawString("Copy", pickerX + buttonWidth / 2.0 - Fonts.width("Copy") / 2.0, textY, GuiTheme.TEXT_SETTING);
         hoveringCopy = isHoveringArea(mouseX, mouseY, pickerX, this.y + yOffset, pickerX + buttonWidth, this.y + yOffset + BTN_HEIGHT);
 
         RenderUtil.rect(context, pickerX + buttonWidth + 2, this.y + yOffset, pickerX + buttonWidth * 2 + 2, this.y + yOffset + BTN_HEIGHT,
                 hoveringPaste ? activeBg : idleBg);
         RenderUtil.rect(context, pickerX + buttonWidth + 2, this.y + yOffset, pickerX + buttonWidth * 2 + 2, this.y + yOffset + BTN_HEIGHT, outlineColor, 1f);
-        drawString("Paste", pickerX + buttonWidth + 2 + buttonWidth / 2.0 - mc.font.width("Paste") / 2.0, textY, GuiTheme.TEXT_SETTING);
+        drawString("Paste", pickerX + buttonWidth + 2 + buttonWidth / 2.0 - Fonts.width("Paste") / 2.0, textY, GuiTheme.TEXT_SETTING);
         hoveringPaste = isHoveringArea(mouseX, mouseY, pickerX + buttonWidth + 2, this.y + yOffset, pickerX + buttonWidth * 2 + 2, this.y + yOffset + BTN_HEIGHT);
     }
 
