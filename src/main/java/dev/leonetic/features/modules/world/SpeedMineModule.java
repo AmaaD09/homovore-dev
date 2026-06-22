@@ -34,7 +34,6 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 import java.awt.Color;
-import java.util.concurrent.TimeUnit;
 
 public class SpeedMineModule extends Module {
 
@@ -42,13 +41,11 @@ public class SpeedMineModule extends Module {
 
     private static final int MINE_SWAP_PRIORITY = 65;
 
-    private static final long INIT_NANOS = System.nanoTime();
-
     private SilentMineBlock rebreakBlock;
     private SilentMineBlock delayedDestroyBlock;
     private BlockPos lastDelayedDestroyBlockPos;
 
-    private double currentGameTickCalculated;
+    private double currentServerTick;
 
     private boolean brokeThisTick;
 
@@ -103,9 +100,12 @@ public class SpeedMineModule extends Module {
         }
     }
 
-    private double getCurrentGameTickCalculated() {
-        return (double) (System.nanoTime() - INIT_NANOS)
-                / (double) TimeUnit.MILLISECONDS.toNanos(50L);
+    private double serverTick() {
+        return mc.level != null ? mc.level.getGameTime() : currentServerTick;
+    }
+
+    private double renderTick(float partial) {
+        return serverTick() + partial;
     }
 
     private boolean withPickaxe(BlockState state, Runnable burst, boolean rebreak) {
@@ -211,7 +211,7 @@ public class SpeedMineModule extends Module {
         usingMainhandThisTick = (offhand != null && offhand.shouldDeferForEat())
                 || (mc.player.isUsingItem()
                 && mc.player.getUsedItemHand() == InteractionHand.MAIN_HAND);
-        currentGameTickCalculated = getCurrentGameTickCalculated();
+        currentServerTick = serverTick();
 
         lastDelayedDestroyBlockPos = hasDelayedDestroy() ? delayedDestroyBlock.blockPos : null;
 
@@ -402,7 +402,7 @@ public class SpeedMineModule extends Module {
     }
 
     public void collectMiningPositions(java.util.Set<BlockPos> out, double minProgress) {
-        double tick = getCurrentGameTickCalculated();
+        double tick = currentServerTick;
         if (rebreakBlock != null && rebreakBlock.getBreakProgress(tick) >= minProgress) out.add(rebreakBlock.blockPos);
         if (delayedDestroyBlock != null && delayedDestroyBlock.getBreakProgress(tick) >= minProgress) out.add(delayedDestroyBlock.blockPos);
     }
@@ -415,7 +415,7 @@ public class SpeedMineModule extends Module {
     }
 
     private void drawBlock(Render3DEvent event, SilentMineBlock data, boolean isPrimary) {
-        double prog = data.getBreakProgress(getCurrentGameTickCalculated());
+        double prog = data.getBreakProgress(renderTick(event.getDelta()));
 
         Color side = isPrimary ? primaryColor.getValue() : sideColor.getValue();
         Color line = lineColor.getValue();
@@ -585,7 +585,7 @@ public class SpeedMineModule extends Module {
         }
 
         double getBreakProgress() {
-            return getBreakProgress(currentGameTickCalculated);
+            return getBreakProgress(currentServerTick);
         }
 
         double getBreakProgress(double gameTick) {
@@ -598,7 +598,7 @@ public class SpeedMineModule extends Module {
         void startBreaking(boolean isDelayedDestroy) {
             ticksHeldPickaxe = 0;
             timesSendBreakPacket = 0;
-            destroyProgressStart = currentGameTickCalculated;
+            destroyProgressStart = currentServerTick;
 
             if (isDelayedDestroy && canRebreakRebreakBlock()) {
                 rebreakBlock = null;
