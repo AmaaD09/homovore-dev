@@ -136,3 +136,5 @@ See [LICENSE](LICENSE).
 - [kiriyaga](https://github.com/Kiriyaga7615) — **Homovore would not have been possible without him.** Endless thanks for the foundation, guidance, and inspiration that made this client what it is.
 
 - [Gonbler](https://github.com/gonbler) — some of Homovore's PVP stuff is built on his code. Thanks for the work on GWare that made those modules possible.
+
+- [Pawstar](https://github.com/pawztar) — moral support
