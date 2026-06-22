@@ -52,21 +52,21 @@ The default keybind is **Right Shift**. You can rebind it in Minecraft's Control
 <details>
 <summary>What is the command prefix?</summary>
 
-The default command prefix is `.` — for example, `.help` or `.bind`. You can change it with the `.prefix <new>` command.
+The default command prefix is `.`. For example, `.help` or `.bind`. You can change it with the `.prefix <new>` command.
 
 </details>
 
 <details>
 <summary>How are modules organized?</summary>
 
-Modules are grouped by category — combat, movement, render, player, world, client, hud, and funny. Open the ClickGUI to browse and toggle them, or bind individual modules to a key.
+Modules are grouped by category. Open the ClickGUI to browse and toggle them, or bind individual modules to a key.
 
 </details>
 
 <details>
 <summary>How do I bind a module to a key?</summary>
 
-Open the ClickGUI, right-click a module to expand its settings, and use the bind option — or use the `.bind` command.
+Open the ClickGUI, right-click a module to expand its settings, and use the bind option, or use the `.bind` command.
 
 </details>
 
