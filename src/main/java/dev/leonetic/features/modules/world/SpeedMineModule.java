@@ -3,12 +3,14 @@ package dev.leonetic.features.modules.world;
 import dev.leonetic.Homovore;
 import dev.leonetic.event.impl.entity.player.PreTickEvent;
 import dev.leonetic.event.impl.network.AttackBlockEvent;
+import dev.leonetic.event.impl.network.PacketEvent;
 import dev.leonetic.event.impl.render.Render3DEvent;
 import dev.leonetic.event.system.Subscribe;
 import dev.leonetic.features.modules.Module;
 import dev.leonetic.features.modules.combat.OffhandModule;
 import dev.leonetic.features.settings.Setting;
 import dev.leonetic.manager.SwapManager;
+import dev.leonetic.manager.SwapRequest;
 import dev.leonetic.mixin.client.ClientLevelAccessor;
 import dev.leonetic.mixin.entity.EntityRotationAccessor;
 import dev.leonetic.util.EnchantmentUtil;
@@ -18,6 +20,8 @@ import dev.leonetic.util.inventory.ResultType;
 import dev.leonetic.util.render.RenderUtil;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.tags.FluidTags;
@@ -51,12 +55,9 @@ public class SpeedMineModule extends Module {
 
     private SwapManager.SwapHandle mineSwapHandle;
 
+    private int mineSwapIdleTicks;
+
     private boolean heldPickaxeThisTick;
-
-    private int ticksSinceHold;
-    private static final int HOLD_GRACE_TICKS = 10;
-
-    private int spoofedFromSlot = -1;
 
     private boolean usingMainhandThisTick;
 
@@ -70,6 +71,7 @@ public class SpeedMineModule extends Module {
     }
 
     private final Setting<Boolean> swing              = bool("Swing", false);
+    private final Setting<Integer> swapHoldGraceTicks = num("SwapHoldGraceTicks", 2, 0, 40);
     private final Setting<Integer> singleBreakFailTicks = num("SingleBreakFailTicks", 20, 5, 50);
 
     private final Setting<Boolean> debugLog           = bool("DebugLog", true);
@@ -99,16 +101,11 @@ public class SpeedMineModule extends Module {
         delayedDestroyBlock = null;
         lastDelayedDestroyBlockPos = null;
 
-        if (spoofedFromSlot != -1) {
-            sendCarried(spoofedFromSlot);
-            spoofedFromSlot = -1;
-        }
-
         if (mineSwapHandle != null) {
             Homovore.swapManager.release(mineSwapHandle);
             mineSwapHandle = null;
         }
-        ticksSinceHold = 0;
+        mineSwapIdleTicks = 0;
     }
 
     private double serverTick() {
@@ -122,31 +119,30 @@ public class SpeedMineModule extends Module {
     private boolean withPickaxe(BlockState state, Runnable burst, boolean rebreak) {
         Result pickaxe = bestPickaxeResult(state);
 
-        if (!pickaxe.found() || pickaxe.holding()
-                || Homovore.swapManager.serverSlot() == pickaxe.slot()) {
-            if (!rebreak && mineSwapHandle != null) heldPickaxeThisTick = true;
+        if (!pickaxe.found() || pickaxe.holding()) {
+            if (!rebreak && pickaxe.holding() && mineSwapHandle != null) heldPickaxeThisTick = true;
             burst.run();
             return true;
         }
 
         if (usingMainhand()) return false;
 
-        if (Homovore.swapManager.isBlockedByOther("SpeedMine", MINE_SWAP_PRIORITY)) return false;
+        if (!rebreak) {
+            if (mineSwapHandle == null || mineSwapHandle.isReleased()) {
+                mineSwapHandle = Homovore.swapManager.acquireLease("SpeedMine", MINE_SWAP_PRIORITY);
+                if (mineSwapHandle == null) return false;
+            }
 
-        int original = InventoryUtil.selected();
-        if (debugLog.getValue()) {
-            Homovore.LOGGER.info(
-                    "[SpeedMine] SILENT-SWAP {} tick={} serverSlot {} -> {} (pickaxe)",
-                    rebreak ? "rebreak" : "fresh-break",
-                    serverTick(), Homovore.swapManager.serverSlot(), pickaxe.slot());
-        }
-        sendCarried(pickaxe.slot());
-        try {
+            if (!Homovore.swapManager.holdsActive(mineSwapHandle)) return false;
+
+            if (InventoryUtil.selected() != pickaxe.slot()) InventoryUtil.swap(pickaxe);
+            heldPickaxeThisTick = true;
             burst.run();
-        } finally {
-            sendCarried(original);
+            return true;
         }
-        return true;
+
+        return Homovore.swapManager.submit(new SwapRequest(
+                "SpeedMine", MINE_SWAP_PRIORITY, pickaxe, burst, false));
     }
 
     private boolean usingMainhand() {
@@ -163,6 +159,8 @@ public class SpeedMineModule extends Module {
         if (blockPos == null || alreadyBreaking(blockPos)) return false;
         if (!canBreak(blockPos)) return false;
         if (!inBreakRange(blockPos)) return false;
+
+        evictFailing(blockPos);
 
         if (!hasDelayedDestroy() && rebreakBlock != null && !blockPos.equals(rebreakBlock.blockPos)) {
             promoteRebreakToDelayedDestroy();
@@ -192,6 +190,33 @@ public class SpeedMineModule extends Module {
         return true;
     }
 
+    private void evictFailing(BlockPos keepPos) {
+        if (rebreakBlock != null && rebreakBlock.isFailing() && !rebreakBlock.blockPos.equals(keepPos)) {
+            if (debugLog.getValue()) logFail("evict-rebreak", rebreakBlock);
+            rebreakBlock.cancelBreaking();
+            rebreakBlock = null;
+        }
+        if (delayedDestroyBlock != null && delayedDestroyBlock.isFailing()
+                && !delayedDestroyBlock.blockPos.equals(keepPos)) {
+            if (debugLog.getValue()) logFail("evict-delayed", delayedDestroyBlock);
+            delayedDestroyBlock.cancelBreaking();
+            delayedDestroyBlock = null;
+        }
+    }
+
+    public boolean hasFailingBlock() {
+        return (rebreakBlock != null && rebreakBlock.isFailing())
+                || (delayedDestroyBlock != null && delayedDestroyBlock.isFailing());
+    }
+
+    private void logFail(String why, SilentMineBlock b) {
+        Homovore.LOGGER.info(
+                "[SpeedMine][FAIL] {} pos={} beenAir={} sends={} heldTicks={} restarts={} prog={} "
+                        + "srvGround={} willGround={}",
+                why, b.blockPos, b.beenAir, b.timesSendBreakPacket, b.ticksHeldPickaxe, b.failRestarts,
+                String.format("%.2f", b.getBreakProgress()), serverKnownOnGround(), willBeOnGround());
+    }
+
     private void promoteRebreakToDelayedDestroy() {
         if (rebreakBlock == null || delayedDestroyBlock != null) return;
         delayedDestroyBlock = rebreakBlock.promoteToDelayedDestroy();
@@ -213,10 +238,12 @@ public class SpeedMineModule extends Module {
         silentBreakBlock(event.getPos(), event.getDirection(), USER_PRIORITY);
     }
 
-    @Subscribe
+    @Subscribe(priority = 10)
     private void onPreTick(PreTickEvent event) {
         if (nullCheck()) return;
         if (mc.player.isCreative() || mc.player.isSpectator()) return;
+
+        diagTick = (long) serverTick();
 
         brokeThisTick = false;
         heldPickaxeThisTick = false;
@@ -250,6 +277,7 @@ public class SpeedMineModule extends Module {
 
         if (hasRebreakBlock() && rebreakBlock.timesSendBreakPacket > singleBreakFailTicks.getValue()
                 && !canRebreakRebreakBlock()) {
+            if (debugLog.getValue()) logFail("rebreak-giveup", rebreakBlock);
             rebreakBlock.cancelBreaking();
             rebreakBlock = null;
         }
@@ -262,12 +290,13 @@ public class SpeedMineModule extends Module {
             }
         }
 
-        sustainPrimaryHold();
         tryFinalizeRebreak();
         sustainDelayedDestroy();
 
         if (hasDelayedDestroy() && delayedDestroyBlock.ticksHeldPickaxe > singleBreakFailTicks.getValue()) {
             if (inBreakRange(delayedDestroyBlock.blockPos)) {
+                delayedDestroyBlock.failRestarts++;
+                if (debugLog.getValue()) logFail("delayed-restart", delayedDestroyBlock);
                 delayedDestroyBlock.startBreaking(true);
             } else {
                 delayedDestroyBlock.cancelBreaking();
@@ -278,37 +307,66 @@ public class SpeedMineModule extends Module {
         releaseMineSwap();
     }
 
-    private void onMineSwapPreempted() {
-        if (spoofedFromSlot != -1) {
-            sendCarried(spoofedFromSlot);
-            spoofedFromSlot = -1;
+    private record Diag(long tick, long nanos, String desc) {}
+    private static final int DIAG_CAP = 48;
+    private final java.util.ArrayDeque<Diag> diag = new java.util.ArrayDeque<>();
+    private volatile long diagTick;
+
+    private void diagRecord(String desc) {
+        synchronized (diag) {
+            diag.addLast(new Diag(diagTick, System.nanoTime(), desc));
+            while (diag.size() > DIAG_CAP) diag.removeFirst();
         }
-        mineSwapHandle = null;
-        heldPickaxeThisTick = false;
-        ticksSinceHold = 0;
+    }
+
+    @Subscribe
+    private void onDiagSend(PacketEvent.Send event) {
+        if (!debugLog.getValue()) return;
+        var p = event.getPacket();
+        String desc;
+        if (p instanceof ServerboundSetCarriedItemPacket s) {
+            desc = "SLOT-> " + s.getSlot();
+        } else if (p instanceof ServerboundPlayerActionPacket a) {
+            desc = a.getAction() + " " + a.getPos().toShortString() + " seq=" + a.getSequence();
+        } else if (p instanceof ServerboundMovePlayerPacket m) {
+            desc = "MOVE " + p.getClass().getSimpleName().replace("ServerboundMovePlayerPacket$", "")
+                    + " onGround=" + m.isOnGround();
+        } else {
+            return;
+        }
+        diagRecord(desc);
+    }
+
+    @Subscribe
+    private void onDiagReceive(PacketEvent.Receive event) {
+        if (!debugLog.getValue()) return;
+        if (!(event.getPacket() instanceof ClientboundPlayerPositionPacket pos)) return;
+        long now = System.nanoTime();
+        StringBuilder sb = new StringBuilder("[SpeedMine][SETBACK] server teleport id=" + pos.id()
+                + " relatives=" + pos.relatives().size() + " toPos=" + pos.change().position()
+                + " (last " + DIAG_CAP + " sent packets, newest last):");
+        synchronized (diag) {
+            for (Diag d : diag) {
+                sb.append(String.format("%n   t%d  -%.1fms  %s", d.tick(), (now - d.nanos()) / 1e6, d.desc()));
+            }
+        }
+        Homovore.LOGGER.info(sb.toString());
     }
 
     private void releaseMineSwap() {
         if (heldPickaxeThisTick) {
-            ticksSinceHold = 0;
+            mineSwapIdleTicks = 0;
             return;
         }
         if (mineSwapHandle == null) return;
-
-        if (++ticksSinceHold <= HOLD_GRACE_TICKS) return;
-
-        if (debugLog.getValue()) {
-            Homovore.LOGGER.info(
-                    "[SpeedMine] SILENT-SWAP hold END tick={} (idle {}t) restoring serverSlot -> {} and releasing handle",
-                    serverTick(), ticksSinceHold, spoofedFromSlot);
-        }
-        if (spoofedFromSlot != -1) {
-            sendCarried(spoofedFromSlot);
-            spoofedFromSlot = -1;
+        if (++mineSwapIdleTicks <= swapHoldGraceTicks.getValue()) return;
+        if (!Homovore.swapManager.holdsActive(mineSwapHandle)) return;
+        if (InventoryUtil.selected() != mineSwapHandle.originalSlot) {
+            InventoryUtil.swap(mineSwapHandle.originalSlot);
         }
         Homovore.swapManager.release(mineSwapHandle);
         mineSwapHandle = null;
-        ticksSinceHold = 0;
+        mineSwapIdleTicks = 0;
     }
 
     private boolean tryFinalizeRebreak() {
@@ -342,23 +400,12 @@ public class SpeedMineModule extends Module {
         BlockState state = mc.level.getBlockState(delayedDestroyBlock.blockPos);
         if (state.isAir()) return;
 
-        if (holdPickaxe(state, delayedDestroyBlock.blockPos)) {
+        if (holdPickaxe(state)) {
             delayedDestroyBlock.ticksHeldPickaxe++;
         }
     }
 
-    private void sustainPrimaryHold() {
-        if (hasDelayedDestroy()) return;
-        if (!hasRebreakBlock()) return;
-        if (!inBreakRange(rebreakBlock.blockPos)) return;
-
-        BlockState state = mc.level.getBlockState(rebreakBlock.blockPos);
-        if (state.isAir() || !canBreak(rebreakBlock.blockPos)) return;
-
-        holdPickaxe(state, rebreakBlock.blockPos);
-    }
-
-    private boolean holdPickaxe(BlockState state, BlockPos pos) {
+    private boolean holdPickaxe(BlockState state) {
         Result pickaxe = bestPickaxeResult(state);
 
         if (!pickaxe.found() || pickaxe.holding()) {
@@ -369,21 +416,11 @@ public class SpeedMineModule extends Module {
         if (usingMainhand()) return false;
 
         if (mineSwapHandle == null || mineSwapHandle.isReleased()) {
-            mineSwapHandle = Homovore.swapManager.acquire("SpeedMine", MINE_SWAP_PRIORITY);
+            mineSwapHandle = Homovore.swapManager.acquireLease("SpeedMine", MINE_SWAP_PRIORITY);
             if (mineSwapHandle == null) return false;
-            mineSwapHandle.onPreempt(this::onMineSwapPreempted);
         }
-
-        if (spoofedFromSlot == -1) spoofedFromSlot = InventoryUtil.selected();
-        if (Homovore.swapManager.serverSlot() != pickaxe.slot()) {
-            if (debugLog.getValue()) {
-                Homovore.LOGGER.info(
-                        "[SpeedMine] SILENT-SWAP hold tick={} serverSlot {} -> {} (pickaxe) pos={} restoreTo={}",
-                        serverTick(), Homovore.swapManager.serverSlot(), pickaxe.slot(),
-                        pos, spoofedFromSlot);
-            }
-            sendCarried(pickaxe.slot());
-        }
+        if (!Homovore.swapManager.holdsActive(mineSwapHandle)) return false;
+        if (InventoryUtil.selected() != pickaxe.slot()) InventoryUtil.swap(pickaxe);
         heldPickaxeThisTick = true;
         return true;
     }
@@ -506,11 +543,6 @@ public class SpeedMineModule extends Module {
         return !s.isAir() && s.getDestroySpeed(mc.level, pos) >= 0;
     }
 
-    private void sendCarried(int slot) {
-        if (slot < 0 || mc.getConnection() == null) return;
-        mc.getConnection().send(new ServerboundSetCarriedItemPacket(slot));
-    }
-
     private void sendAction(ServerboundPlayerActionPacket.Action action, BlockPos pos, Direction dir) {
         if (mc.level == null) return;
         try (var handler = ((ClientLevelAccessor) mc.level)
@@ -627,7 +659,14 @@ public class SpeedMineModule extends Module {
         boolean beenAir;
         int timesSendBreakPacket;
         int ticksHeldPickaxe;
+        int failRestarts;
         double destroyProgressStart;
+
+        boolean isFailing() {
+            if (beenAir) return false;
+            int limit = singleBreakFailTicks.getValue();
+            return failRestarts > 0 || timesSendBreakPacket > limit || ticksHeldPickaxe > limit;
+        }
 
         SilentMineBlock(BlockPos blockPos, Direction direction, double priority, boolean isRebreak) {
             this.blockPos = blockPos;
@@ -641,6 +680,7 @@ public class SpeedMineModule extends Module {
             promoted.beenAir = beenAir;
             promoted.ticksHeldPickaxe = ticksHeldPickaxe;
             promoted.timesSendBreakPacket = 0;
+            promoted.failRestarts = failRestarts;
             promoted.destroyProgressStart = destroyProgressStart;
             return promoted;
         }

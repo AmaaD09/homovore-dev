@@ -220,7 +220,7 @@ public class AutoMineModule extends Module {
 
         boolean hasBothInProgress = mine.hasDelayedDestroy() && mine.hasRebreakBlock()
                 && !mine.canRebreakRebreakBlock();
-        if (hasBothInProgress) return;
+        if (hasBothInProgress && !mine.hasFailingBlock()) return;
 
         Queue<BlockPos> targetBlocks = new LinkedList<>();
         if (target1 != null) targetBlocks.add(target1.blockPos);

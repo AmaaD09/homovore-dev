@@ -17,6 +17,8 @@ import net.minecraft.world.item.Items;
 public class SwapManager extends Feature {
     private SwapHandle active;
 
+    private SwapHandle suspendedLease;
+
     private int serverSlot = -1;
 
     private int homeSlot = -1;
@@ -205,26 +207,40 @@ public class SwapManager extends Feature {
             }
             return true;
         } finally {
-            if (active == h) active = null;
+            if (active == h) resumeOrClear();
             h.released = true;
         }
     }
 
     public SwapHandle acquire(String id, int priority) {
+        return acquire(id, priority, false);
+    }
+
+    public SwapHandle acquireLease(String id, int priority) {
+        return acquire(id, priority, true);
+    }
+
+    private SwapHandle acquire(String id, int priority, boolean lease) {
         if (nullCheck()) return null;
         if (active != null) {
             if (active.priority >= priority) {
                 log("acquire DENIED " + id + "/" + priority + " — held by " + active.id + "/" + active.priority);
                 return null;
             }
-            log("acquire " + id + "/" + priority + " preempts " + active.id + "/" + active.priority);
-            active.released = true;
-            if (active.onPreempt != null) active.onPreempt.run();
+            if (active.lease) {
+                suspendedLease = active;
+                log("acquire " + id + "/" + priority + " borrows lease " + active.id + "/" + active.priority);
+            } else {
+                log("acquire " + id + "/" + priority + " preempts " + active.id + "/" + active.priority);
+                active.released = true;
+                if (active.onPreempt != null) active.onPreempt.run();
+            }
         } else {
             log("acquire " + id + "/" + priority);
         }
         if (homeSlot == -1) homeSlot = InventoryUtil.selected();
         SwapHandle h = new SwapHandle(id, priority, InventoryUtil.selected());
+        h.lease = lease;
         active = h;
         return h;
     }
@@ -232,9 +248,25 @@ public class SwapManager extends Feature {
     public void release(SwapHandle h) {
         if (h == null || h.released) return;
         h.released = true;
+        if (suspendedLease == h) suspendedLease = null;
         if (active != h) return;
         log("release " + h.id + "/" + h.priority);
-        active = null;
+        resumeOrClear();
+    }
+
+    private void resumeOrClear() {
+        if (suspendedLease != null && !suspendedLease.released) {
+            active = suspendedLease;
+            suspendedLease = null;
+            log("resume lease " + active.id + "/" + active.priority);
+        } else {
+            suspendedLease = null;
+            active = null;
+        }
+    }
+
+    public boolean holdsActive(SwapHandle h) {
+        return h != null && active == h && !h.released;
     }
 
     public boolean isBlocked(int priority) {
@@ -250,6 +282,7 @@ public class SwapManager extends Feature {
         public final int priority;
         public final int originalSlot;
         boolean released;
+        boolean lease;
         Runnable onPreempt;
 
         SwapHandle(String id, int priority, int originalSlot) {

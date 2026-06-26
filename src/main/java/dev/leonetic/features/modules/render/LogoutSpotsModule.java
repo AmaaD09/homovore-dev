@@ -99,7 +99,6 @@ public class LogoutSpotsModule extends Module {
                 if (loggedPlayers.containsKey(id)) continue;
                 SpotData data = playerCache.get(id);
                 if (data == null) continue;
-                if (!wasInVisualRange(data.pos)) continue;
                 loggedPlayers.put(id, new LogoutSpot(data));
             }
         } else if (event.getPacket() instanceof ClientboundPlayerInfoUpdatePacket pkt
@@ -169,15 +168,6 @@ public class LogoutSpotsModule extends Module {
         ticksOnPlayerList.clear();
         lastDimension = null;
         lastLevel = null;
-    }
-
-    private boolean wasInVisualRange(Vec3 pos) {
-        if (mc.player == null) return false;
-
-        double maxBlocks = (mc.options.getEffectiveRenderDistance() + 1) * 16.0;
-        double dx = mc.player.getX() - pos.x;
-        double dz = mc.player.getZ() - pos.z;
-        return dx * dx + dz * dz <= maxBlocks * maxBlocks;
     }
 
     private String formatElapsed(long logoutTime) {

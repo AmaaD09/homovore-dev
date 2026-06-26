@@ -1,21 +1,16 @@
 package dev.leonetic.features.modules.combat;
 
-import dev.leonetic.Homovore;
 import dev.leonetic.event.impl.entity.player.PreTickEvent;
 import dev.leonetic.event.impl.network.PacketEvent;
 import dev.leonetic.event.system.Subscribe;
 import dev.leonetic.features.modules.Module;
 import dev.leonetic.features.settings.Setting;
-import dev.leonetic.util.DamageUtil;
 import dev.leonetic.util.inventory.InventoryUtil;
 import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
-import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
-import net.minecraft.world.phys.AABB;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ItemUseAnimation;
@@ -35,13 +30,6 @@ public class OffhandModule extends Module {
 
     private final Setting<Boolean> antiGhost = bool("AntiGhost",
             true);
-    private final Setting<Boolean> debugLog = bool("DebugLog",
-            true);
-
-    private final Setting<Boolean> lethalPriority = bool("LethalPriority",
-            true);
-    private final Setting<Boolean> lethalCrystal = bool("LethalCrystal", true);
-    private final Setting<Double> lethalRange = num("LethalRange", 8.0, 1.0, 12.0);
 
     private boolean managingGapple = false;
 
@@ -90,9 +78,8 @@ public class OffhandModule extends Module {
     private void handleMainhandGapple() {
         boolean rmb = mc.options.keyUse.isDown();
         boolean onInteractable = rmb && isInteractableBlock();
-        boolean lethal = lethalPriority.getValue() && isLethalThreat();
 
-        boolean want = rmb && !onInteractable && !lethal && (isMainhandWeapon() || managingGapple);
+        boolean want = rmb && !onInteractable && (isMainhandWeapon() || managingGapple);
 
         if (managingGapple) {
             boolean mainhandIsGapple = mc.player.getMainHandItem().is(Items.ENCHANTED_GOLDEN_APPLE);
@@ -151,34 +138,15 @@ public class OffhandModule extends Module {
 
         for (int attempt = 0; attempt < MAX_REFILL_ATTEMPTS; attempt++) {
             int slot = findTotem();
-            if (slot == -1) {
-                gapLog("offhand refill FAILED — no totem in inventory (attempt " + attempt + ")");
-                return false;
-            }
+            if (slot == -1) return false;
 
             if (!mc.player.getInventory().getItem(slot).is(Items.TOTEM_OF_UNDYING)) continue;
 
-            gapLog("swapToOffhand src=" + slot + " (button 40) attempt " + attempt);
             InventoryUtil.swapToOffhand(slot);
 
             if (mc.player.getOffhandItem().is(Items.TOTEM_OF_UNDYING)) return true;
         }
 
-        gapLog("offhand refill EXHAUSTED — offhand still empty after " + MAX_REFILL_ATTEMPTS + " attempts");
-        return false;
-    }
-
-    private boolean isLethalThreat() {
-        if (nullCheck() || !lethalCrystal.getValue()) return false;
-
-        float health = mc.player.getHealth() + mc.player.getAbsorptionAmount();
-        double range = lethalRange.getValue();
-        AABB area = mc.player.getBoundingBox().inflate(range);
-        for (Entity e : mc.level.getEntities(mc.player, area)) {
-            if (!(e instanceof EndCrystal crystal)) continue;
-            if (mc.player.distanceToSqr(crystal) > range * range) continue;
-            if (DamageUtil.crystalMaxSelfDamage(crystal.position()) + 0.5f >= health) return true;
-        }
         return false;
     }
 
@@ -190,7 +158,6 @@ public class OffhandModule extends Module {
             if (pkt.getEventId() != 35 || pkt.getEntity(mc.level) != mc.player) return;
 
             if (mc.player.containerMenu.containerId != 0) return;
-            gapLog("totem-pop refill (EntityEvent 35, netty thread)");
             mc.player.setItemSlot(EquipmentSlot.OFFHAND, ItemStack.EMPTY);
             refillOffhandTotem();
         }
@@ -236,7 +203,7 @@ public class OffhandModule extends Module {
     private boolean isMainhandWeapon() {
         ItemStack mh = mc.player.getMainHandItem();
         if (mh.isEmpty()) return true;
-        if (mh.is(ItemTags.SWORDS) || mh.is(ItemTags.AXES)) return true;
+        if (mh.is(ItemTags.SWORDS) || mh.is(ItemTags.AXES) || mh.is(ItemTags.PICKAXES)) return true;
         Item item = mh.getItem();
         return item instanceof TridentItem || item instanceof MaceItem;
     }
@@ -291,15 +258,4 @@ public class OffhandModule extends Module {
         }
     }
 
-    private String gapState() {
-        boolean eating = isEatingGapple();
-        int remaining = (mc.player != null && mc.player.isUsingItem())
-                ? mc.player.getUseItemRemainingTicks() : -1;
-        return "managing=" + managingGapple + " latch=" + eatingGappleLatch
-                + " eating=" + eating + " useRemaining=" + remaining + "t";
-    }
-
-    private void gapLog(String where) {
-        if (debugLog.getValue()) Homovore.LOGGER.info("[Offhand] {} ({})", where, gapState());
-    }
 }

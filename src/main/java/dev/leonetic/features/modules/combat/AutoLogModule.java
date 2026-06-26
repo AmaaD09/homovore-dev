@@ -1,5 +1,6 @@
 package dev.leonetic.features.modules.combat;
 
+import dev.leonetic.Homovore;
 import dev.leonetic.event.impl.entity.player.TickEvent;
 import dev.leonetic.event.impl.input.KeyInputEvent;
 import dev.leonetic.event.impl.network.PacketEvent;
@@ -68,15 +69,22 @@ public class AutoLogModule extends Module {
         if (event.getPacket() instanceof ClientboundEntityEventPacket pkt) {
             if (pkt.getEventId() == 35 && pkt.getEntity(mc.level) == mc.player) {
                 cachedTotems--;
-                if (logOnTotems.getValue() && cachedTotems <= totemThreshold.getValue() && !awaitingRechamber) {
-                    Channel channel = getChannel();
-                    if (channel == null) {
-                        disconnect();
-                        return;
-                    }
-                    awaitingRechamber = true;
-                    pollForRechamber(channel, System.currentTimeMillis() + 500);
+                if (!logOnTotems.getValue() || cachedTotems > totemThreshold.getValue()) return;
+
+                if (awaitingRechamber) {
+                    awaitingRechamber = false;
+                    mc.execute(this::disconnect);
+                    return;
                 }
+
+                boolean pollOffhand = totemThreshold.getValue() > 1 && isOffhandModuleEnabled();
+                Channel channel = pollOffhand ? getChannel() : null;
+                if (channel == null) {
+                    disconnect();
+                    return;
+                }
+                awaitingRechamber = true;
+                pollForRechamber(channel, System.currentTimeMillis() + 500);
             }
         } else if (event.getPacket() instanceof ClientboundSetHealthPacket pkt) {
             if (pkt.getHealth() <= 0) { disable(); return; }
@@ -149,6 +157,11 @@ public class AutoLogModule extends Module {
     private void closeChannel() {
         Channel channel = getChannel();
         if (channel != null) channel.close();
+    }
+
+    private boolean isOffhandModuleEnabled() {
+        OffhandModule offhand = Homovore.moduleManager.getModuleByClass(OffhandModule.class);
+        return offhand != null && offhand.isEnabled();
     }
 
     private boolean isSurvival() {

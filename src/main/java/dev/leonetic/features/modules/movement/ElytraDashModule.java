@@ -4,6 +4,7 @@ import dev.leonetic.Homovore;
 import dev.leonetic.event.impl.entity.player.PreTickEvent;
 import dev.leonetic.event.system.Subscribe;
 import dev.leonetic.features.modules.Module;
+import dev.leonetic.features.settings.Setting;
 import dev.leonetic.manager.SwapManager;
 import dev.leonetic.util.inventory.InventoryUtil;
 import dev.leonetic.util.inventory.Result;
@@ -16,6 +17,7 @@ import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.equipment.Equippable;
+import net.minecraft.world.phys.Vec3;
 
 import static dev.leonetic.util.inventory.InventoryUtil.FULL_SCOPE;
 
@@ -23,11 +25,20 @@ public class ElytraDashModule extends Module {
 
     private static final String ID = "ElytraDash";
 
-    private static final int ROCKET_SWAP_PRIORITY = 66;
+    private static final int ROCKET_SWAP_PRIORITY = 15;
 
     private static final int CHEST_MENU_SLOT = 6;
 
+    private static final double TAKEOFF_VELOCITY = 0.42;
+
     private static final int OFFHAND_MENU_SLOT = 45;
+
+    public enum TakeoffMode {
+        VELOCITY,
+        VANILLA
+    }
+
+    private final Setting<TakeoffMode> takeoffMode = mode("Takeoff", TakeoffMode.VELOCITY);
 
     private enum Phase {
 
@@ -49,7 +60,7 @@ public class ElytraDashModule extends Module {
     private int refireTicks;
 
     public ElytraDashModule() {
-        super("ElytraDash", "Swap on your elytra, jump into flight, and auto-fire fireworks; swaps back on disable.", Category.MOVEMENT);
+        super("ElytraDash", "Swap on your elytra, lift straight into flight, and auto-fire fireworks; swaps back on disable.", Category.MOVEMENT);
     }
 
     @Override
@@ -112,12 +123,19 @@ public class ElytraDashModule extends Module {
             enterFlight();
             return;
         }
+        if (mc.getConnection() == null) return;
         if (mc.player.onGround()) {
-            mc.player.jumpFromGround();
+            switch (takeoffMode.getValue()) {
+                case VELOCITY -> {
+                    Vec3 vel = mc.player.getDeltaMovement();
+                    mc.player.setDeltaMovement(vel.x, TAKEOFF_VELOCITY, vel.z);
+                    mc.player.setSprinting(true);
+                }
+                case VANILLA -> mc.player.jumpFromGround();
+            }
             return;
         }
 
-        if (mc.getConnection() == null) return;
         mc.getConnection().send(new ServerboundPlayerCommandPacket(
                 mc.player, ServerboundPlayerCommandPacket.Action.START_FALL_FLYING));
         mc.player.startFallFlying();

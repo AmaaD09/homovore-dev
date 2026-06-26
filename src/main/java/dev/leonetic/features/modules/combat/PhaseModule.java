@@ -17,6 +17,9 @@ import net.minecraft.world.phys.Vec3;
 
 public class PhaseModule extends Module {
 
+    private static final double CORNER_THRESHOLD = 0.5;
+    private static final double CORNER_OFFSET = 0.5;
+
     public PhaseModule() {
         super("Phase", "Phases into walls", Category.COMBAT);
     }
@@ -53,13 +56,13 @@ public class PhaseModule extends Module {
         Homovore.rotationManager.submit(new RotationRequest("phase", 150, yaw, pitch, RotationRequest.Mode.SILENT));
 
         mc.gameMode.ensureHasSentCarriedItem();
-        Homovore.swapManager.submit(new SwapRequest("Phase", 80, pearl, r -> {
+        boolean thrown = Homovore.swapManager.submit(new SwapRequest("Phase", 80, pearl, r -> {
             try (var handler = ((ClientLevelAccessor) mc.level).homovore$getBlockStatePredictionHandler().startPredicting()) {
                 mc.getConnection().send(new ServerboundUseItemPacket(r.hand(), handler.currentSequence(), yaw, pitch));
             }
         }, true));
 
-        disable();
+        if (thrown) disable();
     }
 
     private Vec3 calculateTargetPos() {
@@ -71,11 +74,13 @@ public class PhaseModule extends Module {
         double dxCorner = nearestIntX - playerX;
         double dzCorner = nearestIntZ - playerZ;
 
-        if (Math.abs(dxCorner) <= 0.15 && Math.abs(dzCorner) <= 0.15) {
+        double threshold = CORNER_THRESHOLD;
+        double offset = CORNER_OFFSET;
+        if (Math.abs(dxCorner) <= threshold && Math.abs(dzCorner) <= threshold) {
             return new Vec3(
-                playerX + Mth.clamp(dxCorner, -0.15, 0.15),
+                playerX + Mth.clamp(dxCorner, -offset, offset),
                 mc.player.getY() - 0.5,
-                playerZ + Mth.clamp(dzCorner, -0.15, 0.15)
+                playerZ + Mth.clamp(dzCorner, -offset, offset)
             );
         }
 
