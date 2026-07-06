@@ -9,6 +9,7 @@ import dev.leonetic.features.modules.hud.CountsHudModule;
 import dev.leonetic.features.modules.hud.NotifierHudModule;
 import dev.leonetic.features.modules.hud.PingHudModule;
 import dev.leonetic.features.modules.hud.RadarHudModule;
+import dev.leonetic.features.modules.hud.SpeedHudModule;
 import dev.leonetic.features.modules.hud.TotemsHudModule;
 import dev.leonetic.features.settings.Setting;
 
@@ -37,6 +38,7 @@ public class HudClientModule extends Module {
         register(new RadarHudModule(), true);
         register(new ActiveModulesHudModule(), true);
         register(new NotifierHudModule(), true);
+        register(new SpeedHudModule(), false);
     }
 
     private void register(HudModule element, boolean defaultOn) {

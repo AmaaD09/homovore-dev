@@ -55,7 +55,6 @@ public class AutoXPModule extends Module {
         }
 
         if (pauseInAir.getValue() && !mc.player.onGround()) return;
-        if (!shouldThrowNow()) return;
 
         Result xpBottle = InventoryUtil.find(Items.EXPERIENCE_BOTTLE, FULL_SCOPE);
         if (!xpBottle.found()) return;
@@ -63,8 +62,11 @@ public class AutoXPModule extends Module {
         float yaw = mc.player.getYRot();
         float pitch = 90f;
         Homovore.rotationManager.submit(new RotationRequest(
-                "AutoXP", 40, yaw, pitch, RotationRequest.Mode.SILENT
+                "AutoXP", 40, yaw, pitch, RotationRequest.Mode.MOTION
         ));
+
+        if (!shouldThrowNow()) return;
+
         mc.gameMode.ensureHasSentCarriedItem();
 
         Homovore.swapManager.submit(new SwapRequest("AutoXP", 40, xpBottle, r -> {
