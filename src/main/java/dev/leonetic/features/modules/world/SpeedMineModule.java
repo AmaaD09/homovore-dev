@@ -49,6 +49,9 @@ public class SpeedMineModule extends Module {
     private SilentMineBlock delayedDestroyBlock;
     private BlockPos lastDelayedDestroyBlockPos;
 
+    private BlockPos rebreakHoldPos;
+    private int rebreakHoldTicks;
+
     private double currentServerTick;
 
     private boolean brokeThisTick;
@@ -248,6 +251,8 @@ public class SpeedMineModule extends Module {
         brokeThisTick = false;
         heldPickaxeThisTick = false;
 
+        if (rebreakHoldTicks > 0) rebreakHoldTicks--;
+
         OffhandModule offhand = Homovore.moduleManager.getModuleByClass(OffhandModule.class);
         usingMainhandThisTick = (offhand != null && offhand.shouldDeferForEat())
                 || (mc.player.isUsingItem()
@@ -372,6 +377,8 @@ public class SpeedMineModule extends Module {
     private boolean tryFinalizeRebreak() {
         if (rebreakBlock == null) return false;
 
+        if (rebreakHoldTicks > 0 && rebreakBlock.blockPos.equals(rebreakHoldPos)) return false;
+
         if (!rebreakBlock.isReady()) return false;
 
         if (!inBreakRange(rebreakBlock.blockPos)) {
@@ -480,6 +487,11 @@ public class SpeedMineModule extends Module {
 
     public BlockPos getRebreakBlockPos() {
         return rebreakBlock != null ? rebreakBlock.blockPos : null;
+    }
+
+    public void holdRebreak(BlockPos pos, int ticks) {
+        rebreakHoldPos = pos != null ? pos.immutable() : null;
+        rebreakHoldTicks = pos != null ? ticks : 0;
     }
 
     public BlockPos getDelayedDestroyBlockPos() {

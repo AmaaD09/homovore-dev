@@ -3,6 +3,7 @@ package dev.leonetic.features.modules.combat;
 import dev.leonetic.Homovore;
 import dev.leonetic.event.impl.entity.player.PreTickEvent;
 import dev.leonetic.event.impl.network.PacketEvent;
+import dev.leonetic.event.impl.render.Render3DEvent;
 import dev.leonetic.event.system.Subscribe;
 import dev.leonetic.features.modules.Module;
 import dev.leonetic.features.modules.client.TargetsModule;
@@ -13,13 +14,18 @@ import dev.leonetic.manager.RotationRequest;
 import dev.leonetic.manager.SwapManager;
 import dev.leonetic.util.MathUtil;
 import dev.leonetic.util.PlaceUtil;
+import dev.leonetic.util.render.RenderUtil;
 import dev.leonetic.util.inventory.InventoryUtil;
 import dev.leonetic.util.inventory.Result;
 import dev.leonetic.util.inventory.ResultType;
 import dev.leonetic.util.models.Timer;
 import dev.leonetic.util.player.ChatUtil;
+import dev.leonetic.mixin.entity.LivingEntityEffectParticlesAccessor;
+import it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongIterator;
+import net.minecraft.core.particles.ColorParticleOption;
+import net.minecraft.core.particles.ParticleOptions;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
@@ -57,6 +63,7 @@ import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
+import java.awt.Color;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -77,6 +84,10 @@ public class AutoCrystalModule extends Module {
     private final Setting<Boolean> antiSurround  = bool("AntiSurround", true).setPage("General");
     private final Setting<Integer> antiSurroundCompletion = num("AntiSurroundCompletion", 70, 0, 100).setPage("General");
 
+    private final Setting<Boolean> assumeResistance       = bool("AssumeResistance", true).setPage("General");
+    private final Setting<Integer> assumedResistanceLevel = num("AssumedResistanceLevel", 3, 1, 5).setPage("General");
+    private final Setting<Integer> resistanceHoldMs       = num("ResistanceHoldMs", 600, 0, 5000).setPage("General");
+
     private final Setting<Boolean> antiChinese   = bool("AntiChinese", false).setPage("AntiChinese");
 
     private final Setting<Double>  antiChineseRange = num("Range", 5.0, 1.0, 5.14).setPage("AntiChinese");
@@ -87,6 +98,23 @@ public class AutoCrystalModule extends Module {
     private final Setting<Double>  basePlaceMinDamage = num("BasePlaceMinDamage", 5.0, 0.0, 36.0).setPage("BasePlace");
     private final Setting<Boolean> debug         = bool("Debug", false).setPage("Extra");
     private final Setting<Boolean> packetLog     = bool("PacketLog", false).setPage("Extra");
+
+    private final Setting<RenderMode> renderMode = mode("Render", RenderMode.GRADIENT).setPage("Render");
+    private final Setting<Color>   sideColor     = color("SideColor", 130, 80, 255, 45).setPage("Render");
+    private final Setting<Color>   lineColor     = color("LineColor", 130, 80, 255, 255).setPage("Render");
+    private final Setting<Float>   lineWidth     = num("LineWidth", 1.5f, 0.5f, 5.0f).setPage("Render");
+    private final Setting<Double>  gradientHeight = num("GradientHeight", 0.7, 0.0, 1.0).setPage("Render");
+    private final Setting<Integer> renderTime    = num("RenderTime", 10, 1, 40).setPage("Render");
+    private final Setting<Integer> smoothness    = num("Smoothness", 10, 1, 50).setPage("Render");
+    private final Setting<Color>   pulseColor    = color("PulseColor", 130, 80, 255, 150).setPage("Render");
+    private final Setting<Double>  pulseSpeed    = num("PulseSpeed", 2.0, 0.2, 6.0).setPage("Render");
+    private final Setting<Double>  pulseExpand   = num("PulseExpand", 0.35, 0.0, 1.0).setPage("Render");
+
+    private BlockPos renderPos = null;
+    private long     renderStartMs = 0L;
+    private AABB     smoothBox = null;
+
+    private enum RenderMode { NONE, GRADIENT, GRADIENT_SMOOTH, PULSE }
 
     private static final double  PLACE_RANGE    = 6.0;
     private static final double  BASE_PLACE_RANGE = 6.0;
@@ -127,6 +155,10 @@ public class AutoCrystalModule extends Module {
 
     private final Set<Integer> deadIds = ConcurrentHashMap.newKeySet();
 
+    private final Int2LongOpenHashMap resistanceSeen = new Int2LongOpenHashMap();
+
+    private static int resistanceRgb = Integer.MIN_VALUE;
+
     private final Set<BlockPos> seeThrough = new HashSet<>();
 
     private int cachedChunkX = Integer.MIN_VALUE;
@@ -143,12 +175,15 @@ public class AutoCrystalModule extends Module {
         basePlaceMinDamage.setVisibility(v -> basePlace.getValue());
         antiChineseRange.setVisibility(v -> antiChinese.getValue());
         antiChineseEnemyRange.setVisibility(v -> antiChinese.getValue());
+        assumedResistanceLevel.setVisibility(v -> assumeResistance.getValue());
+        resistanceHoldMs.setVisibility(v -> assumeResistance.getValue());
     }
 
     @Override
     public void onEnable() {
         crystalPlaces.clear();
         deadIds.clear();
+        resistanceSeen.clear();
         placeTimer.reset();
         breakTimer.reset();
         lastBestDamage = 0;
@@ -170,6 +205,103 @@ public class AutoCrystalModule extends Module {
         deadIds.clear();
         lastBestDamage = 0;
         resetDiag();
+        renderPos = null;
+        smoothBox = null;
+    }
+
+    private void markRender(BlockPos crystalPos) {
+        if (renderMode.getValue() == RenderMode.NONE) return;
+        renderPos = crystalPos;
+        renderStartMs = System.currentTimeMillis();
+    }
+
+    @Override
+    public void onRender3D(Render3DEvent event) {
+        if (nullCheck() || renderMode.getValue() == RenderMode.NONE || renderPos == null) return;
+
+        long elapsed = System.currentTimeMillis() - renderStartMs;
+        long life = renderTime.getValue() * 50L;
+        if (elapsed > life) {
+            renderPos = null;
+            smoothBox = null;
+            return;
+        }
+
+        switch (renderMode.getValue()) {
+            case GRADIENT        -> drawGradient(event, false);
+            case GRADIENT_SMOOTH -> drawGradient(event, true);
+            case PULSE           -> drawPulse(event, elapsed, life);
+            default -> { }
+        }
+    }
+
+    private void drawGradient(Render3DEvent event, boolean smooth) {
+        Color side = sideColor.getValue();
+        Color line = lineColor.getValue();
+        Color clear = new Color(side.getRed(), side.getGreen(), side.getBlue(), 0);
+        double height = gradientHeight.getValue();
+        float lw = lineWidth.getValue();
+
+        BlockPos basePos = renderPos.below();
+
+        double x1, z1, x2, z2, yTop;
+        if (smooth) {
+            AABB target = new AABB(basePos);
+            if (smoothBox == null) {
+                smoothBox = target;
+            } else {
+                double f = 1.0 / smoothness.getValue();
+                smoothBox = new AABB(
+                        lerp(smoothBox.minX, target.minX, f), lerp(smoothBox.minY, target.minY, f), lerp(smoothBox.minZ, target.minZ, f),
+                        lerp(smoothBox.maxX, target.maxX, f), lerp(smoothBox.maxY, target.maxY, f), lerp(smoothBox.maxZ, target.maxZ, f));
+            }
+            x1 = smoothBox.minX; z1 = smoothBox.minZ;
+            x2 = smoothBox.maxX; z2 = smoothBox.maxZ;
+            yTop = smoothBox.maxY;
+        } else {
+            x1 = basePos.getX(); z1 = basePos.getZ();
+            x2 = x1 + 1;         z2 = z1 + 1;
+            yTop = basePos.getY() + 1;
+        }
+        double yBottom = yTop - height;
+        var m = event.getMatrix();
+
+        RenderUtil.quadHorizontal(m, x1, z1, x2, z2, yTop, side);
+        RenderUtil.gradientQuadVertical(m, x1, z1, x2, z1, yTop, yBottom, side, clear);
+        RenderUtil.gradientQuadVertical(m, x2, z1, x2, z2, yTop, yBottom, side, clear);
+        RenderUtil.gradientQuadVertical(m, x2, z2, x1, z2, yTop, yBottom, side, clear);
+        RenderUtil.gradientQuadVertical(m, x1, z2, x1, z1, yTop, yBottom, side, clear);
+
+        RenderUtil.drawLine(new Vec3(x1, yTop, z1), new Vec3(x2, yTop, z1), line, lw);
+        RenderUtil.drawLine(new Vec3(x2, yTop, z1), new Vec3(x2, yTop, z2), line, lw);
+        RenderUtil.drawLine(new Vec3(x2, yTop, z2), new Vec3(x1, yTop, z2), line, lw);
+        RenderUtil.drawLine(new Vec3(x1, yTop, z2), new Vec3(x1, yTop, z1), line, lw);
+
+        RenderUtil.drawLine(new Vec3(x1, yTop, z1), new Vec3(x1, yBottom, z1), line, lw);
+        RenderUtil.drawLine(new Vec3(x2, yTop, z1), new Vec3(x2, yBottom, z1), line, lw);
+        RenderUtil.drawLine(new Vec3(x2, yTop, z2), new Vec3(x2, yBottom, z2), line, lw);
+        RenderUtil.drawLine(new Vec3(x1, yTop, z2), new Vec3(x1, yBottom, z2), line, lw);
+    }
+
+    private void drawPulse(Render3DEvent event, long elapsed, long life) {
+        double fade = 1.0 - (double) elapsed / life;
+        double phase = elapsed / 1000.0 * pulseSpeed.getValue();
+        double pulse = (Math.sin(phase * Math.PI * 2.0) + 1.0) * 0.5;
+        double grow = pulse * pulseExpand.getValue();
+
+        Color base = pulseColor.getValue();
+        Color fill = new Color(base.getRed(), base.getGreen(), base.getBlue(),
+                Math.clamp((int) (base.getAlpha() * fade), 0, 255));
+        Color line = new Color(base.getRed(), base.getGreen(), base.getBlue(),
+                Math.clamp((int) (255 * fade), 0, 255));
+
+        AABB box = new AABB(renderPos).inflate(grow);
+        RenderUtil.drawBoxFilled(event.getMatrix(), box, fill);
+        RenderUtil.drawBox(event.getMatrix(), box, line, lineWidth.getValue());
+    }
+
+    private static double lerp(double a, double b, double f) {
+        return a + (b - a) * f;
     }
 
     @Subscribe
@@ -835,8 +967,8 @@ public class AutoCrystalModule extends Module {
 
             float armor     = (float) living.getAttributeValue(Attributes.ARMOR);
             float toughness = (float) living.getAttributeValue(Attributes.ARMOR_TOUGHNESS);
-            MobEffectInstance resistance = living.getEffect(MobEffects.RESISTANCE);
-            float resistMult = resistance != null ? 1.0f - 0.2f * (resistance.getAmplifier() + 1) : 1.0f;
+            int resistAmp = resolveResistanceAmplifier(living);
+            float resistMult = resistAmp >= 0 ? Math.max(0f, 1.0f - 0.2f * (resistAmp + 1)) : 1.0f;
 
             int protPoints = 0;
             if (!living.getItemBySlot(EquipmentSlot.HEAD).isEmpty())  protPoints += 4;
@@ -849,6 +981,48 @@ public class AutoCrystalModule extends Module {
                     armor, toughness, resistMult, protPoints));
         }
         return out;
+    }
+
+    private int resolveResistanceAmplifier(LivingEntity living) {
+        MobEffectInstance real = living.getEffect(MobEffects.RESISTANCE);
+        if (real != null) return real.getAmplifier();
+        if (!assumeResistance.getValue()) return -1;
+
+        long now = System.currentTimeMillis();
+        if (hasResistanceParticle(living)) {
+            resistanceSeen.put(living.getId(), now);
+            return assumedResistanceLevel.getValue() - 1;
+        }
+        long last = resistanceSeen.getOrDefault(living.getId(), 0L);
+        if (last != 0L && now - last <= resistanceHoldMs.getValue()) {
+            return assumedResistanceLevel.getValue() - 1;
+        }
+        return -1;
+    }
+
+    private static boolean hasResistanceParticle(LivingEntity living) {
+        int ref = resistanceRgb();
+        if (ref < 0) return false;
+        List<ParticleOptions> particles = living.getEntityData()
+                .get(LivingEntityEffectParticlesAccessor.homovore$getDataEffectParticles());
+        for (int i = 0, n = particles.size(); i < n; i++) {
+            if (particles.get(i) instanceof ColorParticleOption c && rgbOf(c) == ref) return true;
+        }
+        return false;
+    }
+
+    private static int resistanceRgb() {
+        if (resistanceRgb == Integer.MIN_VALUE) {
+            ParticleOptions po = new MobEffectInstance(MobEffects.RESISTANCE).getParticleOptions();
+            resistanceRgb = po instanceof ColorParticleOption c ? rgbOf(c) : -1;
+        }
+        return resistanceRgb;
+    }
+
+    private static int rgbOf(ColorParticleOption c) {
+        return (Math.round(c.getRed() * 255f) << 16)
+                | (Math.round(c.getGreen() * 255f) << 8)
+                | Math.round(c.getBlue() * 255f);
     }
 
     private void updateSeeThrough() {
@@ -909,6 +1083,7 @@ public class AutoCrystalModule extends Module {
             if (sentOffhand) {
                 diagPlaceSent++;
                 crystalPlaces.put(base.above().asLong(), System.currentTimeMillis());
+                markRender(base.above());
             }
             return;
         }
@@ -935,6 +1110,7 @@ public class AutoCrystalModule extends Module {
         if (sent) {
             diagPlaceSent++;
             crystalPlaces.put(base.above().asLong(), System.currentTimeMillis());
+            markRender(base.above());
             if (handle != null) pendingSwapHandle = handle;
         } else if (acquiredNow) {
 

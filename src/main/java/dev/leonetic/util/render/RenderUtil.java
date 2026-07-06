@@ -14,6 +14,7 @@ import net.minecraft.gizmos.Gizmos;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix3x2f;
+import org.joml.Matrix4f;
 
 import java.awt.*;
 
@@ -217,6 +218,41 @@ public class RenderUtil implements Util {
 
     public static void drawLine(Vec3 from, Vec3 to, Color c, float lineWidth) {
         Gizmos.line(from, to, c.getRGB(), lineWidth).setAlwaysOnTop();
+    }
+
+    // ---- World-space translucent quads (camera-relative, drawn via the global quad pipeline) ----
+
+    private static void worldVertex(BufferBuilder bb, Matrix4f m, Vec3 cam, double x, double y, double z, Color c) {
+        bb.addVertex(m, (float) (x - cam.x), (float) (y - cam.y), (float) (z - cam.z))
+                .setColor(c.getRed() / 255.0F, c.getGreen() / 255.0F, c.getBlue() / 255.0F, c.getAlpha() / 255.0F);
+    }
+
+    /** Flat horizontal quad at height {@code y} spanning [x1,z1]..[x2,z2]. */
+    public static void quadHorizontal(PoseStack stack, double x1, double z1, double x2, double z2, double y, Color c) {
+        Vec3 cam = mc.gameRenderer.getMainCamera().position();
+        Matrix4f m = stack.last().pose();
+        BufferBuilder bb = Tesselator.getInstance().begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+        worldVertex(bb, m, cam, x1, y, z1, c);
+        worldVertex(bb, m, cam, x2, y, z1, c);
+        worldVertex(bb, m, cam, x2, y, z2, c);
+        worldVertex(bb, m, cam, x1, y, z2, c);
+        Layers.quads().draw(bb.buildOrThrow());
+    }
+
+    /**
+     * Vertical quad ("skirt" wall). The horizontal edge from (x1,z1) to (x2,z2) is extruded
+     * down from {@code yTop} to {@code yBottom}, with a colour gradient between the two edges.
+     */
+    public static void gradientQuadVertical(PoseStack stack, double x1, double z1, double x2, double z2,
+                                            double yTop, double yBottom, Color top, Color bottom) {
+        Vec3 cam = mc.gameRenderer.getMainCamera().position();
+        Matrix4f m = stack.last().pose();
+        BufferBuilder bb = Tesselator.getInstance().begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+        worldVertex(bb, m, cam, x1, yTop, z1, top);
+        worldVertex(bb, m, cam, x2, yTop, z2, top);
+        worldVertex(bb, m, cam, x2, yBottom, z2, bottom);
+        worldVertex(bb, m, cam, x1, yBottom, z1, bottom);
+        Layers.quads().draw(bb.buildOrThrow());
     }
 
     public static PoseStack matrixFrom(Vec3 pos) {

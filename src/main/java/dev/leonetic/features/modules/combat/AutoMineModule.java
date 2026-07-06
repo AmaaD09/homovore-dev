@@ -325,6 +325,7 @@ public class AutoMineModule extends Module {
 
         if (placeGlass(pos)) {
             glassUsedAttempts++;
+            mine.holdRebreak(pos, 5);
         }
     }
 

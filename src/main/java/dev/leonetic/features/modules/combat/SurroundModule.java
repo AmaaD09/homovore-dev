@@ -173,6 +173,7 @@ public class SurroundModule extends Module {
         }
 
         List<BlockPos> placePoses = new ArrayList<>();
+        List<BlockPos> cornerPlacePoses = new ArrayList<>();
         List<BlockPos> fireworkPlacePoses = new ArrayList<>();
         wantedPoses.clear();
         fireworkPoses.clear();
@@ -232,6 +233,27 @@ public class SurroundModule extends Module {
             }
         }
 
+        // Diagonal corners of the footprint. These are placed after the edges
+        // (appended to the queue below), so the edge ring is always secured
+        // first, then the corners close the diagonal gaps.
+        BlockPos[] corners = {
+                new BlockPos(minX - 1, feetY, minZ - 1),
+                new BlockPos(minX - 1, feetY, maxZ + 1),
+                new BlockPos(maxX + 1, feetY, minZ - 1),
+                new BlockPos(maxX + 1, feetY, maxZ + 1)
+        };
+        for (BlockPos corner : corners) {
+            BlockState state = mc.level.getBlockState(corner);
+
+            wantedPoses.add(corner.immutable());
+
+            if (tryFirework(corner, now, fireworkPlacePoses)) {
+                // firework handled this corner
+            } else if (state.isAir() || state.canBeReplaced()) {
+                cornerPlacePoses.add(corner);
+            }
+        }
+
         if (selfTrap.getValue() && selfTrapHead.getValue()) {
             boolean prone = crawlTrap.getValue()
                     && (mc.player.isVisuallyCrawling() || mc.player.isFallFlying());
@@ -261,6 +283,11 @@ public class SurroundModule extends Module {
 
         Vec3 predicted = mc.player.position().add(mc.player.getDeltaMovement().scale(0.5));
         placePoses.sort(Comparator.comparingDouble(p -> Vec3.atCenterOf(p).distanceToSqr(predicted)));
+
+        // Corners are queued strictly after every edge/floor/head block so the
+        // main surround is always completed first; sort them among themselves.
+        cornerPlacePoses.sort(Comparator.comparingDouble(p -> Vec3.atCenterOf(p).distanceToSqr(predicted)));
+        placePoses.addAll(cornerPlacePoses);
 
         if (attack.getValue() && now - lastAttackTime >= 50) {
 

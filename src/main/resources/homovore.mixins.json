@@ -20,6 +20,7 @@
     "client.ClientLevelAccessor",
     "entity.EntityRotationAccessor",
     "entity.FireworkRocketEntityAccessor",
+    "entity.LivingEntityEffectParticlesAccessor",
     "entity.MixinClientPlayerEntity",
     "entity.MixinLivingEntityTravel",
     "entity.MixinLocalPlayerRotation",
