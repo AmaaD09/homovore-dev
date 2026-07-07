@@ -10,6 +10,8 @@ public class NoRenderModule extends Module {
     public final Setting<Boolean> noTilt = bool("NoTilt", true).setPage("Camera");
     public final Setting<Boolean> noBob = bool("NoBob", true).setPage("Camera");
     public final Setting<Boolean> noSway = bool("NoSway", false).setPage("Camera");
+    public final Setting<Boolean> noSwap = bool("NoSwap", false).setPage("Camera");
+    public final Setting<Boolean> oldAnimation = bool("OldAnimation", false).setPage("Camera");
     public final Setting<Boolean> noTotem = bool("NoTotem", true).setPage("Camera");
 
     public final Setting<Boolean> noFire = bool("NoFire", true).setPage("Overlays");
@@ -29,7 +31,7 @@ public class NoRenderModule extends Module {
     public final Setting<Boolean> noWaterParticle = bool("NoWaterParticle", true).setPage("Particles");
     public final Setting<Boolean> noExplosion = bool("NoExplosion", true).setPage("Particles");
     public final Setting<Boolean> noBlockBreak = bool("NoBreakParticle", false).setPage("Particles");
-    public final Setting<Boolean> noPotion = bool("NoPotionParticle", true).setPage("Particles");
+    public final Setting<Boolean> noPotionParticle = bool("NoPotionParticle", false).setPage("Particles");
 
     public final Setting<Integer> tileEntity = num("TileEntity", 0, 0, 75).setPage("World");
     public final Setting<Boolean> noLiquid = bool("NoLiquid", false).setPage("World");
@@ -58,8 +60,7 @@ public class NoRenderModule extends Module {
     }
 
     public static NoRenderModule getInstance() {
-        if (Homovore.moduleManager == null)
-            return null;
+        if (Homovore.moduleManager == null) return null;
         return Homovore.moduleManager.getModuleByClass(NoRenderModule.class);
     }
 
