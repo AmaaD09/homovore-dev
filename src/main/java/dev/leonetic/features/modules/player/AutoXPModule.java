@@ -62,7 +62,7 @@ public class AutoXPModule extends Module {
         float yaw = mc.player.getYRot();
         float pitch = 90f;
         Homovore.rotationManager.submit(new RotationRequest(
-                "AutoXP", 40, yaw, pitch, RotationRequest.Mode.MOTION
+                "AutoXP", 40, yaw, pitch, RotationRequest.Mode.SILENT
         ));
 
         if (!shouldThrowNow()) return;

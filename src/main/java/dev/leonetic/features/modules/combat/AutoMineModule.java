@@ -48,6 +48,7 @@ public class AutoMineModule extends Module {
     private final Setting<SortPriority> targetPriority = mode("Priority", SortPriority.Angle);
     private final Setting<Boolean> ignoreNakeds = bool("IgnoreNakeds", true);
     private final Setting<ExtendBreakMode> extendBreakMode = mode("Extend", ExtendBreakMode.Long);
+    private final Setting<Boolean> underMine = bool("UnderMine", true);
     private final Setting<AntiSwimMode> antiSwim = mode("AntiSwim", AntiSwimMode.None);
     private final Setting<AntiSurroundMode> antiSurroundMode = mode("AntiSurround", AntiSurroundMode.Auto);
     private final Setting<Boolean> antiSurroundInnerSnap = bool("InnerSnap", true);
@@ -442,9 +443,11 @@ public class AutoMineModule extends Module {
                 if (isBlockInFeet(surround)) continue;
                 checkPos.add(new CheckPos(surround, CheckPosType.Surround));
 
-                BlockPos base = surround.below();
-                if (canBreak(base, mc.level.getBlockState(base))) {
-                    checkPos.add(new CheckPos(base, CheckPosType.TerrainBase));
+                if (underMine.getValue()) {
+                    BlockPos base = surround.below();
+                    if (canBreak(base, mc.level.getBlockState(base))) {
+                        checkPos.add(new CheckPos(base, CheckPosType.TerrainBase));
+                    }
                 }
 
                 switch (extendBreakMode.getValue()) {
