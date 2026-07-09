@@ -339,7 +339,7 @@ public class AutoMineModule extends Module {
     }
 
     private boolean placeGlass(BlockPos pos) {
-        Result glass = InventoryUtil.find(Items.GLASS, EnumSet.of(ResultType.HOTBAR));
+        Result glass = InventoryUtil.find(Items.GLASS, InventoryUtil.PLACE_SCOPE);
         if (!glass.found()) return false;
         if (!PlaceUtil.canPlace(pos)) return false;
         if (!Homovore.placementManager.enqueue(pos, glass.slot())) return false;

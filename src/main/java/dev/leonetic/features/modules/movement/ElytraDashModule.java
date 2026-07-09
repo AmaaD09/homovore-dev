@@ -1,11 +1,9 @@
 package dev.leonetic.features.modules.movement;
 
-import dev.leonetic.Homovore;
 import dev.leonetic.event.impl.entity.player.PreTickEvent;
 import dev.leonetic.event.system.Subscribe;
 import dev.leonetic.features.modules.Module;
 import dev.leonetic.features.settings.Setting;
-import dev.leonetic.manager.SwapManager;
 import dev.leonetic.mixin.entity.FireworkRocketEntityAccessor;
 import dev.leonetic.util.inventory.InventoryUtil;
 import dev.leonetic.util.inventory.Result;
@@ -26,10 +24,6 @@ import net.minecraft.world.phys.Vec3;
 import static dev.leonetic.util.inventory.InventoryUtil.FULL_SCOPE;
 
 public class ElytraDashModule extends Module {
-
-    private static final String ID = "ElytraDash";
-
-    private static final int ROCKET_SWAP_PRIORITY = 15;
 
     private static final int CHEST_MENU_SLOT = 6;
 
@@ -219,19 +213,12 @@ public class ElytraDashModule extends Module {
             return true;
         }
 
-        SwapManager.SwapHandle handle = Homovore.swapManager.acquire(ID, ROCKET_SWAP_PRIORITY);
-        if (handle == null) return false;
+        int containerSlot = containerSlotOf(rocket);
+        InventoryUtil.click(containerSlot, InventoryUtil.selected(), ClickType.SWAP);
         try {
-            int containerSlot = switch (rocket.type()) {
-                case OFFHAND -> OFFHAND_MENU_SLOT;
-                case HOTBAR  -> rocket.slot() + 36;
-                default      -> rocket.slot();
-            };
-            InventoryUtil.click(containerSlot, InventoryUtil.selected(), ClickType.SWAP);
             mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
-            InventoryUtil.click(containerSlot, InventoryUtil.selected(), ClickType.SWAP);
         } finally {
-            Homovore.swapManager.release(handle);
+            InventoryUtil.click(containerSlot, InventoryUtil.selected(), ClickType.SWAP);
         }
         return true;
     }

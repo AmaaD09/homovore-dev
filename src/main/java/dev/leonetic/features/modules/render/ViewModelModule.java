@@ -13,6 +13,7 @@ public class ViewModelModule extends Module {
     public final Setting<Double> posZ = num("PosZ", 0.0, -1.0, 1.0);
     public final Setting<Boolean> noSway = bool("NoSway", false);
     public final Setting<Boolean> noSwapAnimation = bool("NoSwapAnimation", false);
+    public final Setting<Boolean> oldAnimation = bool("OldAnimation", false);
 
     public ViewModelModule() {
         super("ViewModel", "change scale position and stuff", Category.RENDER);

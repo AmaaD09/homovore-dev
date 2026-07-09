@@ -160,7 +160,7 @@ public class SurroundModule extends Module {
     private void onTick(TickEvent event) {
         if (nullCheck() || mc.screen != null) return;
 
-        var obs = InventoryUtil.find(Items.OBSIDIAN, InventoryUtil.HOTBAR_SCOPE);
+        var obs = InventoryUtil.find(Items.OBSIDIAN, InventoryUtil.PLACE_SCOPE);
         if (!obs.found() || obs.type() == ResultType.OFFHAND) {
             cachedObsSlot = -1;
             wantedPoses.clear();
@@ -172,7 +172,7 @@ public class SurroundModule extends Module {
 
         cachedFireworkSlot = -1;
         if (fireworks.getValue()) {
-            var fw = InventoryUtil.find(Items.FIREWORK_ROCKET, InventoryUtil.HOTBAR_SCOPE);
+            var fw = InventoryUtil.find(Items.FIREWORK_ROCKET, InventoryUtil.PLACE_SCOPE);
             if (fw.found() && fw.type() != ResultType.OFFHAND) cachedFireworkSlot = fw.slot();
         }
 

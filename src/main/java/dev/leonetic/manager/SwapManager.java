@@ -6,6 +6,7 @@ import dev.leonetic.event.impl.network.PacketEvent;
 import dev.leonetic.event.system.Subscribe;
 import dev.leonetic.features.Feature;
 import dev.leonetic.util.inventory.InventoryUtil;
+import dev.leonetic.util.inventory.ResultType;
 import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
@@ -193,16 +194,17 @@ public class SwapManager extends Feature {
             req.action.accept(req.target);
             return true;
         }
-        SwapHandle h = acquire(req.id, req.priority, false, req.silent);
+        boolean silent = req.silent || req.target.type() == ResultType.INVENTORY;
+        SwapHandle h = acquire(req.id, req.priority, false, silent);
         if (h == null) return false;
         int last = h.originalSlot;
         try {
-            boolean swapped = req.silent ? InventoryUtil.swapSilent(req.target) : InventoryUtil.swap(req.target);
+            boolean swapped = silent ? InventoryUtil.swapSilent(req.target) : InventoryUtil.swap(req.target);
             if (!swapped) return false;
             try {
                 req.action.accept(req.target);
             } finally {
-                if (req.silent) InventoryUtil.swapBackSilent(req.target);
+                if (silent) InventoryUtil.swapBackSilent(req.target);
                 else InventoryUtil.swapBack(req.target, last);
             }
             return true;

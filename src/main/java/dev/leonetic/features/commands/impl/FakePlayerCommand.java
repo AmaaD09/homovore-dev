@@ -6,6 +6,7 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import dev.leonetic.features.commands.Command;
 import dev.leonetic.manager.CommandManager;
 import net.minecraft.client.player.RemotePlayer;
+import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 
@@ -15,6 +16,8 @@ import java.util.List;
 import java.util.UUID;
 
 public class FakePlayerCommand extends Command {
+
+    private static final byte TOTEM_POP_EVENT_ID = 35;
 
     private static final EquipmentSlot[] COPIED_SLOTS = {
             EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND,
@@ -34,8 +37,28 @@ public class FakePlayerCommand extends Command {
         builder.executes(ctx -> spawn("FakePlayer"))
                 .then(literal("remove")
                         .executes(ctx -> removeAll()))
+                .then(literal("pop")
+                        .executes(ctx -> popAll()))
                 .then(argument("name", StringArgumentType.word())
                         .executes(ctx -> spawn(StringArgumentType.getString(ctx, "name"))));
+    }
+
+    private int popAll() {
+        if (nullCheck() || mc.getConnection() == null) {
+            return fail("You need to be in a world to do that.");
+        }
+
+        int popped = 0;
+        for (RemotePlayer fake : spawned) {
+            if (fake.level() != mc.level) continue;
+            mc.getConnection().handleEntityEvent(new ClientboundEntityEventPacket(fake, TOTEM_POP_EVENT_ID));
+            popped++;
+        }
+
+        if (popped == 0) {
+            return fail("No fake players to pop. Spawn one first.");
+        }
+        return success("Popped %s fake player(s)", popped);
     }
 
     private int spawn(String name) {

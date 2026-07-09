@@ -54,7 +54,7 @@ public class PearlBlockerModule extends Module {
     private void onTick(TickEvent event) {
         if (nullCheck()) return;
 
-        var obs = InventoryUtil.find(Items.OBSIDIAN, InventoryUtil.HOTBAR_SCOPE);
+        var obs = InventoryUtil.find(Items.OBSIDIAN, InventoryUtil.PLACE_SCOPE);
         if (!obs.found() || obs.type() == ResultType.OFFHAND) return;
         int obsSlot = obs.slot();
 
