@@ -25,6 +25,7 @@ public class AutoXPModule extends Module {
 
     private final Setting<Bind> throwBind = key("Throw", Bind.none());
     private final Setting<Mode> mode = mode("Mode", Mode.STREAM);
+    private final Setting<Boolean> pauseInAir = bool("PauseInAir", true);
     private final Setting<Boolean> autoRepair = bool("AutoRepair", true);
     private final Setting<Integer> minThreshold = num("MinThreshold", 30, 1, 100);
     private final Setting<Integer> maxThreshold = num("MaxThreshold", 80, 1, 100);
@@ -54,6 +55,7 @@ public class AutoXPModule extends Module {
     @Override
     public String getDisplayInfo() {
         if (!throwing) return null;
+        if (!nullCheck() && isPaused()) return "Paused";
         return xpNeeded() + " XP";
     }
 
@@ -66,7 +68,7 @@ public class AutoXPModule extends Module {
         if (mc.screen != null) return;
 
         if (throwing) {
-            tickThrow();
+            if (!isPaused()) tickThrow();
             return;
         }
 
@@ -79,8 +81,13 @@ public class AutoXPModule extends Module {
         else if (repairing && allMendingAbove(maxThreshold.getValue())) repairing = false;
 
         if (!repairing) return;
+        if (isPaused()) return;
         if (!shouldThrowNow()) return;
         throwBottles(throwAmount());
+    }
+
+    private boolean isPaused() {
+        return pauseInAir.getValue() && !mc.player.onGround();
     }
 
     private void handleThrowBind() {
