@@ -37,6 +37,7 @@ public class SurroundModule extends Module {
     private final Setting<Boolean> attack        = bool("Attack", true).setPage("General");
 
     private final Setting<Boolean> fireworks     = bool("Fireworks", true).setPage("General");
+    private final Setting<Boolean> crystalReact  = bool("CrystalReact", false).setPage("General");
     private final Setting<Boolean> safe          = bool("Safe", false).setPage("General");
     private final Setting<Boolean> keepReplacing = bool("KeepReplacing", false).setPage("General");
 
@@ -675,7 +676,13 @@ public class SurroundModule extends Module {
     }
 
     private boolean canRocket(BlockPos pos, long now) {
-        return isHot(pos, now) && isFullBlock(pos.above()) && isFullBlock(pos.below()) && hasFireworkCornerSupport(pos);
+        return (isHot(pos, now) || crystalReact.getValue() && hasCrystalAt(pos))
+                && isFullBlock(pos.above()) && isFullBlock(pos.below()) && hasFireworkCornerSupport(pos);
+    }
+
+    private boolean hasCrystalAt(BlockPos pos) {
+        AABB box = new AABB(pos).inflate(0.5, 1.0, 0.5);
+        return !mc.level.getEntitiesOfClass(EndCrystal.class, box).isEmpty();
     }
 
     private boolean hasFireworkCornerSupport(BlockPos pos) {

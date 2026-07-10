@@ -28,6 +28,8 @@ import java.util.stream.Collectors;
 
 public class BreakIndicatorsModule extends Module {
 
+    private static final long TTL_MS = 2000L;
+
     private final Setting<Boolean> useDoubleminePrediction = bool("UseDoubleminePrediction", false).setPage("General");
     private final Setting<Float> rebreakCompletionAmount = num("RebreakCompletionAmount", 0.7f, 0.0f, 1.5f).setPage("General");
     private final Setting<Float> completionAmount = num("FullCompletionAmount", 1.0f, 0.0f, 1.5f).setPage("General");
@@ -63,8 +65,9 @@ public class BreakIndicatorsModule extends Module {
         if (nullCheck()) return;
         if (!(event.getPacket() instanceof ClientboundBlockDestructionPacket packet)) return;
 
+        int progress = packet.getProgress();
         Entity entity = mc.level.getEntity(packet.getId());
-        breakPackets.add(new BlockBreak(packet.getPos().immutable(), currentTick(0.0f), entity));
+        breakPackets.add(new BlockBreak(packet.getPos().immutable(), currentTick(0.0f), entity, progress));
     }
 
     public boolean isBlockBeingBroken(BlockPos blockPos) {
@@ -80,6 +83,11 @@ public class BreakIndicatorsModule extends Module {
         while (!breakPackets.isEmpty()) {
             BlockBreak breakEvent = breakPackets.remove();
 
+            if (breakEvent.stage < 0 || breakEvent.stage > 9) {
+                breakStartTimes.remove(breakEvent.blockPos);
+                continue;
+            }
+
             if (useDoubleminePrediction.getValue() && breakEvent.entity instanceof Player) {
                 List<BlockBreak> playerBreakingBlocks = breakStartTimes.values().stream()
                         .filter(x -> x.entity == breakEvent.entity && !x.blockPos.equals(breakEvent.blockPos))
@@ -91,7 +99,12 @@ public class BreakIndicatorsModule extends Module {
                 }
             }
 
-            breakStartTimes.putIfAbsent(breakEvent.blockPos, breakEvent);
+            BlockBreak existing = breakStartTimes.get(breakEvent.blockPos);
+            if (existing == null) {
+                breakStartTimes.put(breakEvent.blockPos, breakEvent);
+            } else {
+                existing.update(breakEvent, currentTick);
+            }
         }
 
         Iterator<Map.Entry<BlockPos, BlockBreak>> iterator = breakStartTimes.entrySet().iterator();
@@ -99,8 +112,9 @@ public class BreakIndicatorsModule extends Module {
             Map.Entry<BlockPos, BlockBreak> entry = iterator.next();
             BlockState state = mc.level.getBlockState(entry.getKey());
 
-            if (state.isAir()
-                    || entry.getValue().getBreakProgress(currentTick) > removeCompletionAmount.getValue()
+            if (System.currentTimeMillis() - entry.getValue().lastUpdate > TTL_MS
+                    || state.isAir()
+                    || entry.getValue().progress(currentTick) > removeCompletionAmount.getValue()
                     || !InteractionUtil.canBreak(entry.getKey(), state)) {
                 iterator.remove();
             }
@@ -140,13 +154,36 @@ public class BreakIndicatorsModule extends Module {
     private class BlockBreak {
         private final BlockPos blockPos;
         private final double startTick;
-        private final Entity entity;
+        private Entity entity;
+        private int stage;
+        private long lastUpdate;
+        private double lastUpdateTick;
+        private double renderProgress;
+        private double progressPerTick = 0.035;
         private boolean isRebreak;
 
-        private BlockBreak(BlockPos blockPos, double startTick, Entity entity) {
+        private BlockBreak(BlockPos blockPos, double startTick, Entity entity, int stage) {
             this.blockPos = blockPos;
             this.startTick = startTick;
             this.entity = entity;
+            this.stage = stage;
+            this.lastUpdate = System.currentTimeMillis();
+            this.lastUpdateTick = startTick;
+            this.renderProgress = stageProgress();
+        }
+
+        private void update(BlockBreak next, double currentTick) {
+            double previousStageProgress = stageProgress();
+            double nextStageProgress = next.stageProgress();
+            double elapsed = Math.max(1.0, currentTick - lastUpdateTick);
+            if (nextStageProgress > previousStageProgress) {
+                progressPerTick = Math.clamp((nextStageProgress - previousStageProgress) / elapsed, 0.01, 0.12);
+            }
+            renderProgress = Math.max(progress(currentTick), nextStageProgress);
+            entity = next.entity;
+            stage = next.stage;
+            lastUpdate = System.currentTimeMillis();
+            lastUpdateTick = currentTick;
         }
 
         private void renderBlock(Render3DEvent event, double currentTick) {
@@ -155,7 +192,7 @@ public class BreakIndicatorsModule extends Module {
             AABB orig = shape.isEmpty() ? new AABB(0, 0, 0, 1, 1, 1) : shape.bounds();
 
             double completion = isRebreak ? rebreakCompletionAmount.getValue() : completionAmount.getValue();
-            double scale = completion <= 0.0 ? 1.0 : Math.clamp(getBreakProgress(currentTick) / completion, 0.0, 1.0);
+            double scale = completion <= 0.0 ? 1.0 : Math.clamp(progress(currentTick) / completion, 0.0, 1.0);
 
             double cx = (orig.minX + orig.maxX) * 0.5;
             double cy = (orig.minY + orig.maxY) * 0.5;
@@ -171,12 +208,14 @@ public class BreakIndicatorsModule extends Module {
             RenderUtil.drawBox(event.getMatrix(), box, lineColor.getValue(), lineWidth.getValue());
         }
 
-        private double getBreakProgress(double currentTick) {
-            BlockState state = mc.level.getBlockState(blockPos);
-            int slot = InteractionUtil.fastestToolSlot(state);
-            double breakingSpeed = InteractionUtil.rawMiningSpeed(slot, state, mc.player.onGround());
+        private double progress(double currentTick) {
+            double target = stageProgress();
+            double animated = renderProgress + (currentTick - lastUpdateTick) * progressPerTick;
+            return Math.max(target, animated);
+        }
 
-            return InteractionUtil.breakDelta(breakingSpeed, state) * (currentTick - startTick);
+        private double stageProgress() {
+            return (stage + 1) / 10.0;
         }
     }
 }

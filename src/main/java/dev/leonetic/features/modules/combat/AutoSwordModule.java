@@ -49,6 +49,10 @@ public class AutoSwordModule extends Module {
     private final Setting<Boolean> strict = bool("Strict", true)
             .setVisibility(v -> criticals.getValue());
 
+    private final Setting<Boolean> fallMace = bool("FallMace", false);
+    private final Setting<Double> minHeight = num("MinHeight", 3.0, 0.0, 20.0)
+            .setVisibility(v -> fallMace.getValue());
+
     private Entity currentTarget = null;
     private float attackCooldownTicks = 0f;
 
@@ -267,7 +271,7 @@ public class AutoSwordModule extends Module {
         int bestSlot = -1;
         float bestDamage = -1f;
 
-        boolean prioritizeMace = MaceItem.canSmashAttack(mc.player);
+        boolean prioritizeMace = shouldUseFallMace();
 
         for (int slot = 0; slot < 9; slot++) {
             ItemStack held = mc.player.getInventory().getItem(slot);
@@ -305,6 +309,12 @@ public class AutoSwordModule extends Module {
             }
         }
         return bestSlot;
+    }
+
+    private boolean shouldUseFallMace() {
+        return fallMace.getValue()
+                && MaceItem.canSmashAttack(mc.player)
+                && Homovore.positionManager.getFallDistance() >= minHeight.getValue();
     }
 
     private Vec3 getClosestPointToEye(Vec3 eye, AABB box) {
