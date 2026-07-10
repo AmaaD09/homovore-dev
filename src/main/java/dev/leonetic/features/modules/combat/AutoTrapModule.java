@@ -497,7 +497,7 @@ public class AutoTrapModule extends Module {
     }
 
     private int hotbarSlotOf(Item item) {
-        var r = InventoryUtil.find(item, InventoryUtil.HOTBAR_SCOPE);
+        var r = InventoryUtil.find(item, InventoryUtil.PLACE_SCOPE);
         return (r.found() && r.type() != ResultType.OFFHAND) ? r.slot() : -1;
     }
 

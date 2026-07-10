@@ -29,6 +29,7 @@ public class RotationManager {
 
     private float realYaw, realPitch;
     private float rotationYaw, rotationPitch;
+    private float rotationYaw0, rotationPitch0;
     private float serverYaw, serverPitch;
     private float serverYaw0;
     private float serverDeltaYaw;
@@ -86,6 +87,9 @@ public class RotationManager {
         if (mc.player == null) return;
 
         updateRealRotation(mc.player.getYRot(), mc.player.getXRot());
+
+        rotationYaw0 = rotationYaw;
+        rotationPitch0 = rotationPitch;
 
         RotationRequest active = getActiveRequest();
         if (active != null) {
@@ -273,6 +277,14 @@ public class RotationManager {
 
     public float getRotationYaw() { return rotationYaw; }
     public float getRotationPitch() { return rotationPitch; }
+
+    public float getRenderYaw(float partialTicks) {
+        return Mth.rotLerp(partialTicks, rotationYaw0, rotationYaw);
+    }
+
+    public float getRenderPitch(float partialTicks) {
+        return rotationPitch0 + (rotationPitch - rotationPitch0) * partialTicks;
+    }
 
     public float getServerYaw() { return serverYaw; }
     public float getServerPitch() { return serverPitch; }

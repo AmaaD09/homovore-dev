@@ -86,6 +86,7 @@ public class RadarHudModule extends HudModule {
 
             int y = baseY - row * lineHeight;
             int x = screenWidth() - RIGHT_MARGIN - totalW;
+            mark(x, y, totalW, lineHeight);
 
             int nameColor = resolveNameColor(hudClient, entry.player);
 
@@ -93,6 +94,7 @@ public class RadarHudModule extends HudModule {
                 int logoSize = lineHeight;
                 int logoX = x - logoSize - LOGO_GAP;
                 int logoY = y + (lineHeight - logoSize) / 2;
+                mark(logoX, logoY, logoSize, logoSize);
                 ctx.blit(RenderPipelines.GUI_TEXTURED, LOGO,
                         logoX, logoY, 0.0f, 0.0f,
                         logoSize, logoSize,

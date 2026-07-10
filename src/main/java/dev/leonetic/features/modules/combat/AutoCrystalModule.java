@@ -29,6 +29,7 @@ import net.minecraft.core.particles.ParticleOptions;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundExplodePacket;
 import net.minecraft.network.protocol.game.ServerboundInteractPacket;
 import net.minecraft.network.protocol.game.ServerboundSwingPacket;
 import net.minecraft.core.BlockPos;
@@ -447,8 +448,22 @@ public class AutoCrystalModule extends Module {
         }
     }
 
+    // A reactive (packet-driven) placement can leave our 68-priority swap handle
+    // held across the tick boundary. Release it at the very start of the tick,
+    // before lower-priority miners (SpeedMine@PreTick 10) try to acquire the
+    // hotbar — otherwise our lingering handle denies their mine-swap and
+    // two-block mining stalls.
+    @Subscribe(priority = 1000)
+    private void onPreTickReleaseStale(PreTickEvent event) {
+        releasePendingSwap();
+    }
+
     @Subscribe(priority = -100)
     private void onPreTickRestore(PreTickEvent event) {
+        releasePendingSwap();
+    }
+
+    private void releasePendingSwap() {
         if (pendingSwapHandle != null) {
             Homovore.swapManager.release(pendingSwapHandle);
             pendingSwapHandle = null;
@@ -641,7 +656,7 @@ public class AutoCrystalModule extends Module {
     }
 
     private boolean doBasePlace(BasePlaceTarget target) {
-        Result obs = InventoryUtil.find(Items.OBSIDIAN, InventoryUtil.HOTBAR_SCOPE);
+        Result obs = InventoryUtil.find(Items.OBSIDIAN, InventoryUtil.PLACE_SCOPE);
         if (!obs.found() || obs.type() == ResultType.OFFHAND) return false;
         int slot = obs.slot();
 
@@ -1067,7 +1082,7 @@ public class AutoCrystalModule extends Module {
     }
 
     private void doPlace(PlaceTarget target, boolean trustBase) {
-        Result result = InventoryUtil.find(Items.END_CRYSTAL, EnumSet.of(ResultType.HOTBAR));
+        Result result = InventoryUtil.find(Items.END_CRYSTAL, InventoryUtil.PLACE_SCOPE);
         if (!result.found()) {
             lastBestDamage = 0;
             return;
@@ -1088,7 +1103,17 @@ public class AutoCrystalModule extends Module {
             return;
         }
 
-        int originalSlot     = InventoryUtil.selected();
+        if (result.type() == ResultType.INVENTORY) {
+            diagPlaceAttempt++;
+            if (Homovore.placementManager.placeCrystal(base, slot, trustBase)) {
+                diagPlaceSent++;
+                crystalPlaces.put(base.above().asLong(), System.currentTimeMillis());
+                markRender(base.above());
+            }
+            return;
+        }
+
+        int originalSlot     = Homovore.swapManager.serverSlot();
 
         if (pendingSwapHandle != null && pendingSwapHandle.isReleased()) {
             pendingSwapHandle = null;
@@ -1394,6 +1419,23 @@ public class AutoCrystalModule extends Module {
     @Override
     public String getDisplayInfo() {
         return lastBestDamage > 0 ? String.format("%.1f", lastBestDamage) : null;
+    }
+
+    private final java.util.ArrayDeque<Long> explodeTimes = new java.util.ArrayDeque<>();
+
+    @Subscribe
+    private void onExplodePacket(PacketEvent.Receive event) {
+        if (!(event.getPacket() instanceof ClientboundExplodePacket)) return;
+        long now = System.currentTimeMillis();
+        explodeTimes.addLast(now);
+        while (!explodeTimes.isEmpty() && now - explodeTimes.peekFirst() > 1000) explodeTimes.removeFirst();
+    }
+
+    @Override
+    public String getMeta() {
+        long now = System.currentTimeMillis();
+        while (!explodeTimes.isEmpty() && now - explodeTimes.peekFirst() > 1000) explodeTimes.removeFirst();
+        return String.valueOf(explodeTimes.size());
     }
 
     private record PlaceTarget(BlockPos base, float damage) {}

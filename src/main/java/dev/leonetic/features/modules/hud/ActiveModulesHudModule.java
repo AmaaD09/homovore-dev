@@ -6,14 +6,12 @@ import com.google.gson.JsonObject;
 import dev.leonetic.Homovore;
 import dev.leonetic.event.impl.render.Render2DEvent;
 import dev.leonetic.features.modules.Module;
-import dev.leonetic.features.modules.client.ClickGuiModule;
 import dev.leonetic.features.modules.client.HudClientModule;
 import dev.leonetic.features.modules.client.HudModule;
 import dev.leonetic.features.settings.Bind;
 import dev.leonetic.util.traits.Jsonable;
 import net.minecraft.client.gui.GuiGraphics;
 
-import java.awt.Color;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -82,33 +80,35 @@ public class ActiveModulesHudModule extends HudModule implements Jsonable {
             if (module == null) continue;
 
             String display = module.getDisplayName();
+            String metaRaw = module.getMeta();
+            String meta = metaRaw != null ? " (" + metaRaw + ")" : "";
             Bind bind = module.getBind().getKey() > 0 ? module.getBind() : null;
             String suffix = bind != null ? " [" + bind.toString() + "]" : "";
 
-            int width = mc.font.width(display) + mc.font.width(suffix);
+            int width = mc.font.width(display) + mc.font.width(meta) + mc.font.width(suffix);
             int x = screenWidth() - RIGHT_MARGIN - width;
+            mark(x, y, width, mc.font.lineHeight);
 
             int nameColor = module.isEnabled() ? activeColor : GRAY;
             ctx.drawString(mc.font, display, x, y, nameColor);
+            int cursor = x + mc.font.width(display);
+            if (!meta.isEmpty()) {
+                ctx.drawString(mc.font, meta, cursor, y, GRAY);
+                cursor += mc.font.width(meta);
+            }
             if (!suffix.isEmpty()) {
-                ctx.drawString(mc.font, suffix, x + mc.font.width(display), y, bindColor(module));
+                ctx.drawString(mc.font, suffix, cursor, y, activeColor);
             }
 
             y += mc.font.lineHeight;
         }
     }
 
-    private int bindColor(Module module) {
-        ClickGuiModule gui = ClickGuiModule.getInstance();
-        if (gui == null) return GRAY;
-        Color accent = gui.categoryAccent(module.getCategory());
-        return new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 255).getRGB();
-    }
-
     private int bottomRightTop(HudClientModule hudClient) {
         int linesBelow = 0;
         if (hudClient != null) {
-            if (hudClient.isElementEnabled(CoordinatesHudModule.class)) linesBelow++;
+            if (hudClient.isElementEnabled(CoordinatesHudModule.class)
+                    && !hudClient.coordinatesLeft.getValue()) linesBelow++;
             if (hudClient.isElementEnabled(PingHudModule.class)) linesBelow++;
 
             if (hudClient.isElementEnabled(RadarHudModule.class)) {

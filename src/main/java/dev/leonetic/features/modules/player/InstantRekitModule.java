@@ -7,12 +7,13 @@ import dev.leonetic.event.impl.entity.player.TickEvent;
 import dev.leonetic.event.system.Subscribe;
 import dev.leonetic.features.commands.Command;
 import dev.leonetic.features.modules.Module;
-import dev.leonetic.features.settings.Bind;
 import dev.leonetic.features.settings.Setting;
 import dev.leonetic.util.inventory.InventoryUtil;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ClickType;
@@ -24,14 +25,17 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class InstantRekitModule extends Module {
 
-    private final Setting<Bind> trigger = key("Trigger", Bind.none());
     private final Setting<Boolean> topUpStacks = bool("TopUpStacks", true);
     private final Setting<Boolean> closeOnDone = bool("CloseOnDone", false);
 
-    private final Map<Integer, String> kit = new LinkedHashMap<>();
+    public static final String DEFAULT_KIT = "default";
+
+    private final Map<String, Map<Integer, String>> kits = new LinkedHashMap<>();
+    private String activeKit = DEFAULT_KIT;
 
     private boolean firedThisContainer;
 
@@ -39,47 +43,64 @@ public class InstantRekitModule extends Module {
         super("InstantRekit", "Restores a saved kit from an open container in a single tick.", Category.PLAYER);
     }
 
-    public int saveKit() {
+    public int saveKit(String name) {
         if (nullCheck()) return 0;
-        kit.clear();
+        Map<Integer, String> snapshot = new LinkedHashMap<>();
         for (int slot = 0; slot < 36; slot++) {
             ItemStack stack = mc.player.getInventory().getItem(slot);
             if (stack.isEmpty()) continue;
-            kit.put(slot, BuiltInRegistries.ITEM.getKey(stack.getItem()).toString());
+            snapshot.put(slot, BuiltInRegistries.ITEM.getKey(stack.getItem()).toString());
         }
-        return kit.size();
+        if (snapshot.isEmpty()) return 0;
+        kits.put(name, snapshot);
+        activeKit = name;
+        return snapshot.size();
+    }
+
+    public boolean loadKit(String name) {
+        if (!kits.containsKey(name)) return false;
+        activeKit = name;
+        firedThisContainer = false;
+        return true;
+    }
+
+    public Set<String> listKits() {
+        return kits.keySet();
     }
 
     public boolean hasKit() {
-        return !kit.isEmpty();
+        Map<Integer, String> kit = kits.get(activeKit);
+        return kit != null && !kit.isEmpty();
     }
 
     @Subscribe
     private void onTick(TickEvent event) {
         if (nullCheck()) return;
 
-        boolean down = !trigger.getValue().isEmpty() && trigger.getValue().isDown();
-        if (!down) firedThisContainer = false;
-
         if (!isContainerOpen()) {
             firedThisContainer = false;
             return;
         }
 
-        if (!down || firedThisContainer) return;
+        if (firedThisContainer) return;
         firedThisContainer = true;
-        if (kit.isEmpty()) {
-            Command.sendMessage("{red} No kit saved. Use .savekit while holding your kit.");
+        rekit();
+    }
+
+    private void rekit() {
+        Map<Integer, String> kit = kits.get(activeKit);
+        if (kit == null || kit.isEmpty()) {
+            Command.sendMessage("{red} No kit saved. Use .savekit <name> while holding your kit.");
             return;
         }
         if (!InventoryUtil.cursor().isEmpty()) return;
 
-        for (Move move : plan()) execute(move);
+        for (Move move : plan(kit)) execute(move);
 
         if (closeOnDone.getValue()) mc.player.closeContainer();
     }
 
-    private List<Move> plan() {
+    private List<Move> plan(Map<Integer, String> kit) {
         AbstractContainerMenu menu = mc.player.containerMenu;
         int containerCount = Math.max(0, menu.slots.size() - 36);
         Usage usage = new Usage(menu, containerCount);
@@ -146,9 +167,16 @@ public class InstantRekitModule extends Module {
     }
 
     private boolean isContainerOpen() {
-        if (!(mc.screen instanceof AbstractContainerScreen<?>) || mc.screen instanceof InventoryScreen) return false;
+        if (!(mc.screen instanceof AbstractContainerScreen<?> screen) || mc.screen instanceof InventoryScreen) return false;
+        if (isEnderChest(screen)) return false;
         AbstractContainerMenu menu = mc.player.containerMenu;
         return menu != null && menu.slots.size() > 36;
+    }
+
+    private boolean isEnderChest(AbstractContainerScreen<?> screen) {
+        Component title = screen.getTitle();
+        if (title.getContents() instanceof TranslatableContents tc && "container.enderchest".equals(tc.getKey())) return true;
+        return title.getString().equalsIgnoreCase("Ender Chest");
     }
 
     private static Item item(String id) {
@@ -202,27 +230,67 @@ public class InstantRekitModule extends Module {
     @Override
     public JsonElement toJson() {
         JsonObject object = super.toJson().getAsJsonObject();
-        JsonArray array = new JsonArray();
-        for (Map.Entry<Integer, String> entry : kit.entrySet()) {
-            JsonObject slot = new JsonObject();
-            slot.addProperty("slot", entry.getKey());
-            slot.addProperty("item", entry.getValue());
-            array.add(slot);
+        JsonObject kitsObject = new JsonObject();
+        for (Map.Entry<String, Map<Integer, String>> kitEntry : kits.entrySet()) {
+            JsonArray array = new JsonArray();
+            for (Map.Entry<Integer, String> entry : kitEntry.getValue().entrySet()) {
+                JsonObject slot = new JsonObject();
+                slot.addProperty("slot", entry.getKey());
+                slot.addProperty("item", entry.getValue());
+                array.add(slot);
+            }
+            kitsObject.add(kitEntry.getKey(), array);
         }
-        object.add("Kit", array);
+        object.add("Kits", kitsObject);
+        object.addProperty("ActiveKit", activeKit);
         return object;
     }
 
     @Override
     public void fromJson(JsonElement element) {
         super.fromJson(element);
-        kit.clear();
+        kits.clear();
+        activeKit = DEFAULT_KIT;
         if (element == null || !element.isJsonObject()) return;
-        JsonElement kitElement = element.getAsJsonObject().get("Kit");
-        if (kitElement == null || !kitElement.isJsonArray()) return;
-        for (JsonElement el : kitElement.getAsJsonArray()) {
+        JsonObject object = element.getAsJsonObject();
+
+        JsonElement kitsElement = object.get("Kits");
+        if (kitsElement != null && kitsElement.isJsonObject()) {
+            for (Map.Entry<String, JsonElement> kitEntry : kitsElement.getAsJsonObject().entrySet()) {
+                if (!kitEntry.getValue().isJsonArray()) continue;
+                kits.put(kitEntry.getKey(), readKit(kitEntry.getValue().getAsJsonArray()));
+            }
+        }
+
+        // Backward compat: migrate the old single-kit "Kit" array into "default".
+        JsonElement legacy = object.get("Kit");
+        boolean migratedLegacy = false;
+        if (legacy != null && legacy.isJsonArray()) {
+            Map<Integer, String> kit = readKit(legacy.getAsJsonArray());
+            if (!kit.isEmpty()) {
+                migratedLegacy = kits.putIfAbsent(DEFAULT_KIT, kit) == null;
+            }
+        }
+
+        JsonElement active = object.get("ActiveKit");
+        if (!migratedLegacy && active != null && active.isJsonPrimitive()) {
+            activeKit = active.getAsString();
+        }
+
+        // One-time on launch: an old config has no ActiveKit, so the migrated
+        // kit becomes "default"; and never leave the active selection pointing
+        // at a kit that doesn't exist, or saved kits silently stop loading.
+        if (!kits.isEmpty() && !kits.containsKey(activeKit)) {
+            activeKit = kits.containsKey(DEFAULT_KIT) ? DEFAULT_KIT : kits.keySet().iterator().next();
+        }
+    }
+
+    private static Map<Integer, String> readKit(JsonArray array) {
+        Map<Integer, String> kit = new LinkedHashMap<>();
+        for (JsonElement el : array) {
             JsonObject slot = el.getAsJsonObject();
             kit.put(slot.get("slot").getAsInt(), slot.get("item").getAsString());
         }
+        return kit;
     }
 }

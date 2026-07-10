@@ -12,7 +12,9 @@ import dev.leonetic.util.EnchantmentUtil;
 import dev.leonetic.util.MathUtil;
 import dev.leonetic.features.modules.client.TargetsModule;
 import dev.leonetic.util.render.RenderUtil;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.util.Mth;
@@ -29,6 +31,7 @@ import net.minecraft.world.item.component.ItemAttributeModifiers;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 
 public class AutoSwordModule extends Module {
 
@@ -43,7 +46,7 @@ public class AutoSwordModule extends Module {
     private final Setting<Boolean> criticals = bool("Criticals", false);
     private final Setting<Boolean> critsWithSword = bool("CritsWithSword", true)
             .setVisibility(v -> criticals.getValue());
-    private final Setting<Boolean> critsPauseMoving = bool("CritsPauseMoving", true)
+    private final Setting<Boolean> strict = bool("Strict", true)
             .setVisibility(v -> criticals.getValue());
 
     private Entity currentTarget = null;
@@ -133,20 +136,15 @@ public class AutoSwordModule extends Module {
             }
 
             if (doCrit) {
-                double px = mc.player.getX();
-                double py = mc.player.getY();
-                double pz = mc.player.getZ();
-                Homovore.positionManager.setPositionPacket(px, py + 0.0625, pz, false, false, false);
-                Homovore.positionManager.setPositionPacket(px, py, pz, false, false, false);
+                double x = mc.player.getX(), y = mc.player.getY(), z = mc.player.getZ();
+                boolean hc = mc.player.horizontalCollision;
+                mc.getConnection().send(new ServerboundMovePlayerPacket.PosRot(x, y,          z, serverYaw, serverPitch, mc.player.onGround(), hc));
+                mc.getConnection().send(new ServerboundMovePlayerPacket.PosRot(x, y + 0.0625, z, serverYaw, serverPitch, false,                 hc));
+                mc.getConnection().send(new ServerboundMovePlayerPacket.PosRot(x, y + 0.045,  z, serverYaw, serverPitch, false,                 hc));
             }
 
             mc.gameMode.attack(mc.player, currentTarget);
             mc.player.swing(InteractionHand.MAIN_HAND);
-
-            if (doCrit) {
-                Homovore.positionManager.setPositionPacket(
-                    mc.player.getX(), mc.player.getY(), mc.player.getZ(), true, false, false);
-            }
 
             if (needSwap) {
                 mc.getConnection().send(new ServerboundSetCarriedItemPacket(originalSlot));
@@ -198,12 +196,39 @@ public class AutoSwordModule extends Module {
 
         if (critsWithSword.getValue() && !weaponStack.is(ItemTags.SWORDS)) return false;
 
-        if (critsPauseMoving.getValue()) {
-            double dx = mc.player.getX() - mc.player.xo;
-            double dz = mc.player.getZ() - mc.player.zo;
-            if ((dx * dx + dz * dz) > 1.0E-5) return false;
-        }
+        if (strict.getValue() && !isPlayerPhasedIntoBlock()) return false;
         return true;
+    }
+
+    private boolean isPlayerPhasedIntoBlock() {
+        AABB bb = mc.player.getBoundingBox();
+        double eyeY = mc.player.getEyeY();
+        double headMinY = Mth.clamp(eyeY - 0.1, bb.minY, bb.maxY);
+        AABB headBox = new AABB(bb.minX, headMinY, bb.minZ, bb.maxX, bb.maxY, bb.maxZ);
+
+        int minX = Mth.floor(headBox.minX);
+        int maxX = Mth.floor(headBox.maxX - 1.0E-7);
+        int minY = Mth.floor(headBox.minY);
+        int maxY = Mth.floor(headBox.maxY - 1.0E-7);
+        int minZ = Mth.floor(headBox.minZ);
+        int maxZ = Mth.floor(headBox.maxZ - 1.0E-7);
+
+        for (int x = minX; x <= maxX; x++) {
+            for (int y = minY; y <= maxY; y++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    if (blockIntersectsBox(new BlockPos(x, y, z), headBox)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean blockIntersectsBox(BlockPos pos, AABB box) {
+        VoxelShape shape = mc.level.getBlockState(pos).getCollisionShape(mc.level, pos);
+        if (shape.isEmpty()) return false;
+        return shape.bounds().move(pos).intersects(box);
     }
 
     private Entity findTarget() {

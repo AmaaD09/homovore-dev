@@ -131,12 +131,7 @@ public class SpeedMineModule extends Module {
         if (usingMainhand()) return false;
 
         if (!rebreak) {
-            if (mineSwapHandle == null || mineSwapHandle.isReleased()) {
-                mineSwapHandle = Homovore.swapManager.acquireLease("SpeedMine", MINE_SWAP_PRIORITY);
-                if (mineSwapHandle == null) return false;
-            }
-
-            if (!Homovore.swapManager.holdsActive(mineSwapHandle)) return false;
+            if (!ensureMineSwap()) return false;
 
             if (InventoryUtil.selected() != pickaxe.slot()) InventoryUtil.swap(pickaxe);
             heldPickaxeThisTick = true;
@@ -150,6 +145,22 @@ public class SpeedMineModule extends Module {
 
     private boolean usingMainhand() {
         return usingMainhandThisTick;
+    }
+
+    private boolean ensureMineSwap() {
+        // Keep the lease while it's still ours (active OR suspended by a borrow).
+        // Discarding a merely-suspended lease would force a re-acquire that a
+        // higher-priority active swap denies, dropping the pickaxe hold on the
+        // delayed-destroy block mid-dig.
+        if (mineSwapHandle != null && !Homovore.swapManager.holds(mineSwapHandle)) {
+            Homovore.swapManager.release(mineSwapHandle);
+            mineSwapHandle = null;
+        }
+        if (mineSwapHandle == null) {
+            mineSwapHandle = Homovore.swapManager.acquireLease("SpeedMine", MINE_SWAP_PRIORITY);
+            if (mineSwapHandle == null) return false;
+        }
+        return Homovore.swapManager.holdsActive(mineSwapHandle);
     }
 
     public boolean silentBreakBlock(BlockPos pos, double priority) {
@@ -365,7 +376,12 @@ public class SpeedMineModule extends Module {
         }
         if (mineSwapHandle == null) return;
         if (++mineSwapIdleTicks <= swapHoldGraceTicks.getValue()) return;
-        if (!Homovore.swapManager.holdsActive(mineSwapHandle)) return;
+        if (!Homovore.swapManager.holdsActive(mineSwapHandle)) {
+            Homovore.swapManager.release(mineSwapHandle);
+            mineSwapHandle = null;
+            mineSwapIdleTicks = 0;
+            return;
+        }
         if (InventoryUtil.selected() != mineSwapHandle.originalSlot) {
             InventoryUtil.swap(mineSwapHandle.originalSlot);
         }
@@ -422,11 +438,7 @@ public class SpeedMineModule extends Module {
 
         if (usingMainhand()) return false;
 
-        if (mineSwapHandle == null || mineSwapHandle.isReleased()) {
-            mineSwapHandle = Homovore.swapManager.acquireLease("SpeedMine", MINE_SWAP_PRIORITY);
-            if (mineSwapHandle == null) return false;
-        }
-        if (!Homovore.swapManager.holdsActive(mineSwapHandle)) return false;
+        if (!ensureMineSwap()) return false;
         if (InventoryUtil.selected() != pickaxe.slot()) InventoryUtil.swap(pickaxe);
         heldPickaxeThisTick = true;
         return true;

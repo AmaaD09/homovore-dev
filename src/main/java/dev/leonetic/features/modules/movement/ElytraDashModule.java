@@ -1,21 +1,23 @@
 package dev.leonetic.features.modules.movement;
 
-import dev.leonetic.Homovore;
 import dev.leonetic.event.impl.entity.player.PreTickEvent;
 import dev.leonetic.event.system.Subscribe;
 import dev.leonetic.features.modules.Module;
 import dev.leonetic.features.settings.Setting;
-import dev.leonetic.manager.SwapManager;
+import dev.leonetic.mixin.entity.FireworkRocketEntityAccessor;
 import dev.leonetic.util.inventory.InventoryUtil;
 import dev.leonetic.util.inventory.Result;
 import dev.leonetic.util.inventory.ResultType;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.projectile.FireworkRocketEntity;
 import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.Fireworks;
 import net.minecraft.world.item.equipment.Equippable;
 import net.minecraft.world.phys.Vec3;
 
@@ -23,15 +25,15 @@ import static dev.leonetic.util.inventory.InventoryUtil.FULL_SCOPE;
 
 public class ElytraDashModule extends Module {
 
-    private static final String ID = "ElytraDash";
-
-    private static final int ROCKET_SWAP_PRIORITY = 15;
-
     private static final int CHEST_MENU_SLOT = 6;
 
     private static final double TAKEOFF_VELOCITY = 0.42;
 
     private static final int OFFHAND_MENU_SLOT = 45;
+
+    private static final int FIRE_TIMEOUT = 40;
+
+    private static final int FRESH_LIFE_TICKS = 6;
 
     public enum TakeoffMode {
         VELOCITY,
@@ -39,6 +41,7 @@ public class ElytraDashModule extends Module {
     }
 
     private final Setting<TakeoffMode> takeoffMode = mode("Takeoff", TakeoffMode.VELOCITY);
+    private final Setting<Integer> minBoostTicks = num("MinBoostTicks", 3, 0, 20);
 
     private enum Phase {
 
@@ -57,7 +60,7 @@ public class ElytraDashModule extends Module {
 
     private int ticksSinceRocket = Integer.MAX_VALUE / 2;
 
-    private int refireTicks;
+    private boolean awaitingRocket;
 
     public ElytraDashModule() {
         super("ElytraDash", "Swap on your elytra, lift straight into flight, and auto-fire fireworks; swaps back on disable.", Category.MOVEMENT);
@@ -149,40 +152,75 @@ public class ElytraDashModule extends Module {
             return;
         }
         ticksSinceRocket++;
-        if (ticksSinceRocket >= refireTicks) fireRocket();
+
+        if (awaitingRocket) {
+            if (hasFreshAttachedRocket() || ticksSinceRocket >= FIRE_TIMEOUT) {
+                awaitingRocket = false;
+            } else {
+                return;
+            }
+        }
+
+        if (hasUsefulBoost()) return;
+
+        if (fireRocket()) {
+            awaitingRocket = true;
+            ticksSinceRocket = 0;
+        }
+    }
+
+    private boolean hasFreshAttachedRocket() {
+        for (Entity e : mc.level.entitiesForRendering()) {
+            if (!(e instanceof FireworkRocketEntity rocket)) continue;
+            if (((FireworkRocketEntityAccessor) rocket).homovore$getAttachedToEntity() != mc.player) continue;
+            if (((FireworkRocketEntityAccessor) rocket).homovore$getLife() <= FRESH_LIFE_TICKS) return true;
+        }
+        return false;
+    }
+
+    private boolean hasUsefulBoost() {
+        int bestRemaining = Integer.MIN_VALUE;
+        for (Entity e : mc.level.entitiesForRendering()) {
+            if (!(e instanceof FireworkRocketEntity rocket)) continue;
+            if (((FireworkRocketEntityAccessor) rocket).homovore$getAttachedToEntity() != mc.player) continue;
+
+            int remaining = estimateLifetime(rocket) - ((FireworkRocketEntityAccessor) rocket).homovore$getLife();
+            if (remaining > bestRemaining) bestRemaining = remaining;
+        }
+        return bestRemaining > minBoostTicks.getValue();
+    }
+
+    private int estimateLifetime(FireworkRocketEntity rocket) {
+        ItemStack stack = rocket.getEntityData().get(FireworkRocketEntityAccessor.homovore$getFireworksItemData());
+        Fireworks fireworks = stack.get(DataComponents.FIREWORKS);
+        int flight = fireworks != null ? fireworks.flightDuration() : 1;
+        return 10 * (flight + 1);
     }
 
     private void enterFlight() {
         phase = Phase.FLY;
         ticksSinceRocket = Integer.MAX_VALUE / 2;
+        awaitingRocket = false;
     }
 
-    private void fireRocket() {
+    private boolean fireRocket() {
         Result rocket = InventoryUtil.find(Items.FIREWORK_ROCKET, FULL_SCOPE);
-        if (!rocket.found()) return;
-        if (!canClickPlayerInventory()) return;
-        ticksSinceRocket = 0;
-        refireTicks = InventoryUtil.fireworkRefireTicks(rocket.stack());
+        if (!rocket.found()) return false;
+        if (!canClickPlayerInventory()) return false;
 
         if (rocket.type() == ResultType.HOTBAR && rocket.slot() == InventoryUtil.selected()) {
             mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
-            return;
+            return true;
         }
 
-        SwapManager.SwapHandle handle = Homovore.swapManager.acquire(ID, ROCKET_SWAP_PRIORITY);
-        if (handle == null) return;
+        int containerSlot = containerSlotOf(rocket);
+        InventoryUtil.click(containerSlot, InventoryUtil.selected(), ClickType.SWAP);
         try {
-            int containerSlot = switch (rocket.type()) {
-                case OFFHAND -> OFFHAND_MENU_SLOT;
-                case HOTBAR  -> rocket.slot() + 36;
-                default      -> rocket.slot();
-            };
-            InventoryUtil.click(containerSlot, InventoryUtil.selected(), ClickType.SWAP);
             mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
-            InventoryUtil.click(containerSlot, InventoryUtil.selected(), ClickType.SWAP);
         } finally {
-            Homovore.swapManager.release(handle);
+            InventoryUtil.click(containerSlot, InventoryUtil.selected(), ClickType.SWAP);
         }
+        return true;
     }
 
     private void swapChestArmorWith(int itemContainerSlot) {
