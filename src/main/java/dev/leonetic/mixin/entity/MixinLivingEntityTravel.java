@@ -18,22 +18,12 @@ import static dev.leonetic.util.traits.Util.mc;
 public class MixinLivingEntityTravel {
     @Unique private float homovore$origYaw, homovore$origPitch;
     @Unique private boolean homovore$applied;
-    @Unique private double homovore$frozenY = Double.NaN;
 
     @Inject(method = "travel", at = @At("HEAD"))
     private void homovore$travelHead(Vec3 movementInput, CallbackInfo ci) {
         homovore$applied = false;
 
         LivingEntity self = (LivingEntity) (Object) this;
-
-        if (Homovore.FREEZE_FALL && self == mc.player && !self.onGround()) {
-            if (Double.isNaN(homovore$frozenY)) {
-                homovore$frozenY = self.getY();
-            }
-        } else if (self == mc.player && self.onGround()) {
-            homovore$frozenY = Double.NaN;
-        }
-
         if (self != mc.player || !homovore$spoofing()) return;
 
         homovore$origYaw = self.getYRot();
@@ -45,23 +35,10 @@ public class MixinLivingEntityTravel {
 
     @Inject(method = "travel", at = @At("RETURN"))
     private void homovore$travelReturn(Vec3 movementInput, CallbackInfo ci) {
-        LivingEntity self = (LivingEntity) (Object) this;
-
-        if (Homovore.TIMER_MOVEMENT_ONLY && self == mc.player && Homovore.TIMER != 1f) {
-            float scale = Homovore.TIMER;
-            Vec3 vel = self.getDeltaMovement();
-            self.setDeltaMovement(new Vec3(vel.x * scale, vel.y * scale, vel.z * scale));
-        }
-
-        if (Homovore.FREEZE_FALL && self == mc.player && !Double.isNaN(homovore$frozenY)) {
-            self.setPos(self.getX(), homovore$frozenY, self.getZ());
-            Vec3 vel = self.getDeltaMovement();
-            self.setDeltaMovement(vel.x, 0, vel.z);
-        }
-
         if (!homovore$applied) return;
         homovore$applied = false;
 
+        LivingEntity self = (LivingEntity) (Object) this;
         self.setYRot(homovore$origYaw);
         self.setXRot(homovore$origPitch);
     }

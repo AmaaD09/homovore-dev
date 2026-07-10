@@ -20,9 +20,12 @@ import java.util.function.Predicate;
 public final class InventoryUtil implements Util {
     static final Result NONE = new Result(-1, ItemStack.EMPTY, ResultType.NONE);
 
+    public static final int OFFHAND_SWAP_BUTTON = 40;
+
     public static final EnumSet<ResultType> HOTBAR_SCOPE = EnumSet.of(ResultType.OFFHAND, ResultType.HOTBAR);
     public static final EnumSet<ResultType> INVENTORY_SCOPE = EnumSet.of(ResultType.OFFHAND, ResultType.INVENTORY);
     public static final EnumSet<ResultType> FULL_SCOPE = EnumSet.of(ResultType.OFFHAND, ResultType.HOTBAR, ResultType.INVENTORY);
+    public static final EnumSet<ResultType> PLACE_SCOPE = EnumSet.of(ResultType.HOTBAR, ResultType.INVENTORY);
 
     private static final List<SwapStrategy> STRATEGIES = List.of(
             HoldingStrategy.INSTANCE,
@@ -95,6 +98,20 @@ public final class InventoryUtil implements Util {
         return true;
     }
 
+    // Container-click the found item into a specific hotbar slot (a "click slot
+    // on top of the hotbar update") instead of changing the carried slot. Used
+    // when another swap already owns the hotbar this tick: we move the item into
+    // the slot that swap is holding. Calling it again with the same args restores
+    // the two slots, since ClickType.SWAP is its own inverse.
+    public static boolean altSwapInto(Result result, int hotbarSlot) {
+        if (hotbarSlot < 0 || hotbarSlot > 8 || !result.found()) return false;
+        if (result.type() == ResultType.OFFHAND) return true;
+        if (result.type() == ResultType.HOTBAR && result.slot() == hotbarSlot) return true;
+        if (result.type() != ResultType.HOTBAR && result.type() != ResultType.INVENTORY) return false;
+        swapToHotbarSlot(result.slot(), hotbarSlot);
+        return true;
+    }
+
     public static boolean swapBackSilent(Result result) {
         return swapSilent(result);
     }
@@ -109,7 +126,7 @@ public final class InventoryUtil implements Util {
 
     public static void swapToOffhand(int inventorySlot) {
         int containerSlot = inventorySlot < 9 ? inventorySlot + 36 : inventorySlot;
-        click(containerSlot, 40, ClickType.SWAP);
+        click(containerSlot, OFFHAND_SWAP_BUTTON, ClickType.SWAP);
     }
 
     public static void swapToHotbarSlot(int inventorySlot, int hotbarSlot) {

@@ -89,7 +89,7 @@ public class BomberModule extends Module {
     }
 
     private Result findHotbar(Item item) {
-        Result r = InventoryUtil.find(item, InventoryUtil.HOTBAR_SCOPE);
-        return (r.found() && r.type() == ResultType.HOTBAR) ? r : null;
+        Result r = InventoryUtil.find(item, InventoryUtil.PLACE_SCOPE);
+        return r.found() ? r : null;
     }
 }

@@ -27,6 +27,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.AnvilBlock;
 import net.minecraft.world.level.block.BaseEntityBlock;
@@ -78,6 +79,31 @@ public class PlacementManager extends Feature {
 
     private boolean swapSequenceAvailable() {
         return mc.player == null || mc.player.tickCount != lastSwapSequenceTick;
+    }
+
+    private static int containerSlotOf(int slot) {
+        return slot < 9 ? slot + 36 : slot;
+    }
+
+    private static boolean isInventorySlot(int slot) {
+        return slot > 8;
+    }
+
+    private boolean canAltSwap() {
+        return mc.player != null && mc.player.containerMenu.containerId == 0;
+    }
+
+    private int altSwapIn(int slot) {
+        if (!isInventorySlot(slot)) return slot;
+        if (!canAltSwap()) return -1;
+        int selected = InventoryUtil.selected();
+        InventoryUtil.click(slot, selected, ClickType.SWAP);
+        return selected;
+    }
+
+    private void altSwapOut(int slot, int hotbarSlot) {
+        if (!isInventorySlot(slot)) return;
+        InventoryUtil.click(slot, hotbarSlot, ClickType.SWAP);
     }
 
     private void markSwapSequenceUsed() {
@@ -195,16 +221,26 @@ public class PlacementManager extends Feature {
         for (PlacementTask task : deferred) queue.offer(task);
         if (ready.isEmpty()) return;
 
+        boolean sent = false;
         placing = true;
         try {
             int originalSlot = InventoryUtil.selected();
-            sendBurst(ready, burstSlot, originalSlot);
-            if (burstSlot != originalSlot) {
-                mc.getConnection().send(new ServerboundSetCarriedItemPacket(originalSlot));
+            int useSlot = altSwapIn(burstSlot);
+            if (useSlot >= 0) {
+                try {
+                    sendBurst(ready, useSlot, originalSlot);
+                    if (useSlot != originalSlot) {
+                        mc.getConnection().send(new ServerboundSetCarriedItemPacket(originalSlot));
+                    }
+                    sent = true;
+                } finally {
+                    altSwapOut(burstSlot, useSlot);
+                }
             }
         } finally {
             placing = false;
         }
+        if (!sent) return;
         markSwapSequenceUsed();
 
         long stamp = System.currentTimeMillis();
@@ -240,16 +276,26 @@ public class PlacementManager extends Feature {
         }
         if (ready.isEmpty()) return List.of();
 
+        boolean sent = false;
         placing = true;
         try {
             int originalSlot = InventoryUtil.selected();
-            sendBurst(ready, hotbarSlot, originalSlot);
-            if (hotbarSlot != originalSlot) {
-                mc.getConnection().send(new ServerboundSetCarriedItemPacket(originalSlot));
+            int useSlot = altSwapIn(hotbarSlot);
+            if (useSlot >= 0) {
+                try {
+                    sendBurst(ready, useSlot, originalSlot);
+                    if (useSlot != originalSlot) {
+                        mc.getConnection().send(new ServerboundSetCarriedItemPacket(originalSlot));
+                    }
+                    sent = true;
+                } finally {
+                    altSwapOut(hotbarSlot, useSlot);
+                }
             }
         } finally {
             placing = false;
         }
+        if (!sent) return List.of();
         markSwapSequenceUsed();
 
         long stamp = System.currentTimeMillis();
@@ -260,6 +306,50 @@ public class PlacementManager extends Feature {
             placed.add(p.pos());
         }
         return placed;
+    }
+
+    @Nullable
+    public BlockHitResult prepareAirPlaceHit(BlockPos pos) {
+        if (isOnCooldown(pos)) return null;
+        if (!PlaceUtil.canPlace(pos)) return null;
+
+        Vec3 eye = mc.player.getEyePosition();
+        Direction bestSide = null;
+        double bestDistSq = Double.MAX_VALUE;
+        for (Direction side : Direction.values()) {
+            BlockPos neighbour = pos.relative(side);
+            var state = mc.level.getBlockState(neighbour);
+            if (state.isAir()) continue;
+            if (!state.getFluidState().isEmpty()) continue;
+            if (isInteractable(state.getBlock())) continue;
+
+            Vec3 hit = Vec3.atCenterOf(pos).relative(side, 0.5);
+            Vec3 normal = new Vec3(-side.getStepX(), -side.getStepY(), -side.getStepZ());
+            if (eye.subtract(hit).dot(normal) <= 0.01) continue;
+
+            double distSq = eye.distanceToSqr(hit);
+            if (distSq < bestDistSq) {
+                bestDistSq = distSq;
+                bestSide = side;
+            }
+        }
+
+        if (bestSide != null) {
+            return new BlockHitResult(
+                    Vec3.atCenterOf(pos).relative(bestSide, 0.5),
+                    bestSide.getOpposite(),
+                    pos.relative(bestSide),
+                    false);
+        }
+
+        Direction dir = getAirPlaceDirection(pos);
+        return new BlockHitResult(getAirPlaceHitPos(pos, dir), dir, pos, false);
+    }
+
+    public void notePlacement(BlockPos pos) {
+        long stamp = System.currentTimeMillis();
+        sentAt.put(pos, stamp);
+        recentPlacements.addLast(stamp);
     }
 
     @Nullable
@@ -338,10 +428,24 @@ public class PlacementManager extends Feature {
         return new PreparedClick(pos, neighbour, hitPos, hitSide, task.hotbarSlot());
     }
 
-    private void sendBurst(List<PreparedClick> group, int slot, int currentSelected) {
+    /**
+     * Sends the offhand-swap placement burst. Returns true if it changed the
+     * server carried slot (the caller must then restore it). When another swap
+     * already owns the hotbar this tick, the block item is clicked into the held
+     * slot instead of issuing a competing carried-item change, and the carried
+     * slot is left untouched (returns false).
+     */
+    private boolean sendBurst(List<PreparedClick> group, int slot, int currentSelected) {
         var conn = mc.getConnection();
 
-        if (slot != currentSelected) {
+        int heldSlot = Homovore.swapManager.serverSlot();
+        boolean altSwap = Homovore.swapManager.isHotbarBusy() && heldSlot >= 0 && heldSlot <= 8;
+
+        boolean moved = false;
+        if (altSwap) {
+            moved = heldSlot != slot;
+            if (moved) InventoryUtil.swapToHotbarSlot(slot, heldSlot);
+        } else if (slot != currentSelected) {
             conn.send(new ServerboundSetCarriedItemPacket(slot));
         }
 
@@ -368,6 +472,12 @@ public class PlacementManager extends Feature {
                 BlockPos.ZERO,
                 Direction.DOWN
         ));
+
+        if (altSwap) {
+            if (moved) InventoryUtil.swapToHotbarSlot(slot, heldSlot);
+            return false;
+        }
+        return slot != currentSelected;
     }
 
     private record PreparedClick(BlockPos pos, BlockPos neighbour, Vec3 hitPos, Direction hitSide, int hotbarSlot) {}
@@ -445,30 +555,92 @@ public class PlacementManager extends Feature {
         });
     }
 
+    public boolean placeDirect(BlockPos pos, @Nullable Direction face, int hotbarSlot) {
+        if (nullCheck()) return false;
+
+        long now = System.currentTimeMillis();
+        while (!recentPlacements.isEmpty() && now - recentPlacements.peekFirst() >= WINDOW_MS) {
+            recentPlacements.pollFirst();
+        }
+
+        if (usingItemAnyTick()) return false;
+        OffhandModule offhand = Homovore.moduleManager.getModuleByClass(OffhandModule.class);
+        if (offhand != null && offhand.shouldDeferForEat()) return false;
+
+        if (recentPlacements.size() >= WINDOW_LIMIT) return false;
+        if (isOnCooldown(pos)) return false;
+
+        PreparedClick click = prepareClick(new PlacementTask(pos, face, hotbarSlot));
+        if (click == null) return false;
+
+        boolean sent = false;
+        placing = true;
+        try {
+            int originalSlot = InventoryUtil.selected();
+            int useSlot = altSwapIn(hotbarSlot);
+            if (useSlot >= 0) {
+                try {
+                    sendBurst(List.of(click), useSlot, originalSlot);
+                    if (useSlot != originalSlot) {
+                        mc.getConnection().send(new ServerboundSetCarriedItemPacket(originalSlot));
+                    }
+                    sent = true;
+                } finally {
+                    altSwapOut(hotbarSlot, useSlot);
+                }
+            }
+        } finally {
+            placing = false;
+        }
+        if (!sent) return false;
+
+        long stamp = System.currentTimeMillis();
+        sentAt.put(click.pos(), stamp);
+        recentPlacements.addLast(stamp);
+        return true;
+    }
+
     public boolean placeCrystal(BlockPos base, int hotbarSlot) {
         return placeCrystal(base, hotbarSlot, false);
     }
 
     public boolean placeCrystal(BlockPos base, int hotbarSlot, boolean trustBase) {
+        boolean altSwap = isInventorySlot(hotbarSlot);
+        if (altSwap) {
+            if (usingItemAnyTick()) return false;
+            OffhandModule offhand = Homovore.moduleManager.getModuleByClass(OffhandModule.class);
+            if (offhand != null && offhand.shouldDeferForEat()) return false;
+            if (hasPending()) flushQueue();
+            if (!swapSequenceAvailable()) return false;
+        }
+
         BlockHitResult hit = computeCrystalHit(base, trustBase);
         if (hit == null) return false;
 
-        var conn = mc.getConnection();
-        int originalSlot = Homovore.swapManager.serverSlot();
-        boolean needSlotSwap = hotbarSlot != originalSlot;
+        int useSlot = altSwapIn(hotbarSlot);
+        if (useSlot < 0) return false;
 
-        if (needSlotSwap) {
-            conn.send(new ServerboundSetCarriedItemPacket(hotbarSlot));
+        try {
+            var conn = mc.getConnection();
+            int originalSlot = Homovore.swapManager.serverSlot();
+            boolean needSlotSwap = useSlot != originalSlot;
+
+            if (needSlotSwap) {
+                conn.send(new ServerboundSetCarriedItemPacket(useSlot));
+            }
+
+            try (var handler = ((ClientLevelAccessor) mc.level).homovore$getBlockStatePredictionHandler().startPredicting()) {
+                conn.send(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, handler.currentSequence()));
+            }
+
+            if (needSlotSwap) {
+                conn.send(new ServerboundSetCarriedItemPacket(originalSlot));
+            }
+        } finally {
+            altSwapOut(hotbarSlot, useSlot);
         }
 
-        try (var handler = ((ClientLevelAccessor) mc.level).homovore$getBlockStatePredictionHandler().startPredicting()) {
-            conn.send(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, handler.currentSequence()));
-        }
-
-        if (needSlotSwap) {
-            conn.send(new ServerboundSetCarriedItemPacket(originalSlot));
-        }
-
+        if (altSwap) markSwapSequenceUsed();
         return true;
     }
 
@@ -482,28 +654,101 @@ public class PlacementManager extends Feature {
         BlockHitResult hit = computeCrystalHit(base, trustBase);
         if (hit == null) return false;
 
-        var conn = mc.getConnection();
-        int originalSlot = Homovore.swapManager.serverSlot();
-        boolean needSlotSwap = hotbarSlot != originalSlot;
+        int useSlot = altSwapIn(hotbarSlot);
+        if (useSlot < 0) return false;
 
-        if (needSlotSwap) {
-            conn.send(new ServerboundSetCarriedItemPacket(hotbarSlot));
-        }
-        conn.send(new ServerboundPlayerActionPacket(
-                ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
         try {
-            try (var handler = ((ClientLevelAccessor) mc.level).homovore$getBlockStatePredictionHandler().startPredicting()) {
-                conn.send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, handler.currentSequence()));
+            var conn = mc.getConnection();
+            int originalSlot = Homovore.swapManager.serverSlot();
+            boolean needSlotSwap = useSlot != originalSlot;
+
+            if (needSlotSwap) {
+                conn.send(new ServerboundSetCarriedItemPacket(useSlot));
             }
-        } finally {
             conn.send(new ServerboundPlayerActionPacket(
                     ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
-            if (needSlotSwap) {
-                conn.send(new ServerboundSetCarriedItemPacket(originalSlot));
+            try {
+                try (var handler = ((ClientLevelAccessor) mc.level).homovore$getBlockStatePredictionHandler().startPredicting()) {
+                    conn.send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, handler.currentSequence()));
+                }
+            } finally {
+                conn.send(new ServerboundPlayerActionPacket(
+                        ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
+                if (needSlotSwap) {
+                    conn.send(new ServerboundSetCarriedItemPacket(originalSlot));
+                }
             }
+        } finally {
+            altSwapOut(hotbarSlot, useSlot);
         }
         markSwapSequenceUsed();
 
+        return true;
+    }
+
+    /**
+     * One-tick silent break + crystal place. Holds the pickaxe in the mainhand
+     * and the crystal in the offhand simultaneously, runs the block-break burst,
+     * places a crystal from the offhand, then restores both hands. Unlike
+     * {@link #placeCrystalOffhand}, the crystal reaches the offhand via a
+     * container click (not SWAP_ITEM_WITH_OFFHAND), so the mainhand stays free to
+     * hold the pickaxe — letting us break a block and place a crystal in the same
+     * tick.
+     *
+     * @param pickaxeSlot hotbar slot (0-8) of the pickaxe to break with
+     * @param breakBurst  emits the block-break packets; run while the pickaxe is held
+     * @param crystalSlot hotbar slot (0-8) holding the end crystal
+     * @param crystalBase obsidian/bedrock the crystal is placed on
+     * @param trustBase   skip the obsidian/bedrock check on the base
+     */
+    public boolean breakThenPlaceCrystalOffhand(int pickaxeSlot, Runnable breakBurst,
+                                                int crystalSlot, BlockPos crystalBase, boolean trustBase) {
+        if (nullCheck()) return false;
+        if (mc.player.containerMenu.containerId != 0) return false;
+        if (!InventoryUtil.cursor().isEmpty()) return false;
+        if (pickaxeSlot < 0 || pickaxeSlot > 8 || crystalSlot < 0 || crystalSlot > 8) return false;
+        if (pickaxeSlot == crystalSlot) return false;
+        if (!mc.player.getInventory().getItem(crystalSlot).is(Items.END_CRYSTAL)) return false;
+
+        OffhandModule offhand = Homovore.moduleManager.getModuleByClass(OffhandModule.class);
+        if (offhand != null && offhand.shouldDeferForEat()) return false;
+
+        // This combo owns the hotbar for the tick; don't fight another active swap.
+        if (Homovore.swapManager.isHotbarBusy()) return false;
+
+        if (hasPending()) flushQueue();
+        if (!swapSequenceAvailable()) return false;
+
+        BlockHitResult hit = computeCrystalHit(crystalBase, trustBase);
+        if (hit == null) return false;
+
+        var conn = mc.getConnection();
+        if (conn == null) return false;
+
+        int originalSlot = Homovore.swapManager.serverSlot();
+        boolean needSlotSwap = pickaxeSlot != originalSlot;
+
+        // 1. Crystal -> offhand via container click (mainhand stays free).
+        InventoryUtil.swapToOffhand(crystalSlot);
+        // 2. Pickaxe -> mainhand.
+        if (needSlotSwap) conn.send(new ServerboundSetCarriedItemPacket(pickaxeSlot));
+
+        try {
+            // 3. Break the block with the pickaxe now held in the mainhand.
+            if (breakBurst != null) breakBurst.run();
+
+            // 4. Place the crystal from the offhand.
+            try (var handler = ((ClientLevelAccessor) mc.level)
+                    .homovore$getBlockStatePredictionHandler().startPredicting()) {
+                conn.send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, handler.currentSequence()));
+            }
+        } finally {
+            // 5. Restore mainhand, then 6. restore offhand (swapToOffhand is its own inverse).
+            if (needSlotSwap) conn.send(new ServerboundSetCarriedItemPacket(originalSlot));
+            InventoryUtil.swapToOffhand(crystalSlot);
+        }
+
+        markSwapSequenceUsed();
         return true;
     }
 
@@ -578,7 +823,7 @@ public class PlacementManager extends Feature {
         if (nullCheck()) return false;
         if (poses.isEmpty()) return false;
         if (mc.player.containerMenu.containerId != 0) return false;
-        if (hotbarSlot < 0 || hotbarSlot > 8) return false;
+        if (hotbarSlot < 0 || hotbarSlot > 35) return false;
 
         ItemStack stack = mc.player.getInventory().getItem(hotbarSlot);
         if (stack.isEmpty()) return false;
@@ -586,14 +831,14 @@ public class PlacementManager extends Feature {
         var conn = mc.getConnection();
         if (conn == null) return false;
 
-        int containerSlot = hotbarSlot + 36;
+        int containerSlot = containerSlotOf(hotbarSlot);
         boolean swapped = hotbarSlot != InventoryUtil.selected();
 
         if (swapped) InventoryUtil.click(containerSlot, InventoryUtil.selected(), ClickType.SWAP);
         try {
             for (BlockPos pos : poses) {
                 BlockPos neighbour = pos.relative(face);
-                Vec3 hitPos = Vec3.atCenterOf(pos).relative(face, 0.5);
+                Vec3 hitPos = getFireworkHitPos(pos, face);
                 Direction hitSide = face.getOpposite();
                 BlockHitResult hit = new BlockHitResult(hitPos, hitSide, neighbour, false);
 
@@ -605,6 +850,17 @@ public class PlacementManager extends Feature {
             if (swapped) InventoryUtil.click(containerSlot, InventoryUtil.selected(), ClickType.SWAP);
         }
         return true;
+    }
+
+    private Vec3 getFireworkHitPos(BlockPos pos, Direction face) {
+        if (face != Direction.DOWN || mc.player == null) {
+            return Vec3.atCenterOf(pos).relative(face, 0.5);
+        }
+
+        Vec3 player = mc.player.position();
+        double x = pos.getX() + (player.x >= pos.getX() + 0.5 ? 0.15 : 0.85);
+        double z = pos.getZ() + (player.z >= pos.getZ() + 0.5 ? 0.15 : 0.85);
+        return new Vec3(x, pos.getY(), z);
     }
 
     private Vec3 getLookVector(float yaw, float pitch) {

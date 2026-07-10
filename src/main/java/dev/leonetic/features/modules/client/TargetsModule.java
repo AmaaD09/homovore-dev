@@ -92,6 +92,7 @@ public class TargetsModule extends Module {
                 || e instanceof ZombieVillager
                 || e instanceof MagmaCube
                 || e instanceof Silverfish
+                || e instanceof Endermite
                 || e instanceof Slime
                 || e instanceof Phantom
                 || e instanceof Illusioner

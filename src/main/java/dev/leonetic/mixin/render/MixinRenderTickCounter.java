@@ -15,8 +15,6 @@ public class MixinRenderTickCounter {
 
     @Inject(method = "advanceGameTime(J)I", at = @At(value = "FIELD", target = "Lnet/minecraft/client/DeltaTracker$Timer;lastMs:J"))
     public void beginRenderTick(long timeMillis, CallbackInfoReturnable<Integer> cir) {
-        if (!Homovore.TIMER_MOVEMENT_ONLY) {
-            this.deltaTicks *= Homovore.TIMER;
-        }
+        this.deltaTicks *= Homovore.TIMER;
     }
 }

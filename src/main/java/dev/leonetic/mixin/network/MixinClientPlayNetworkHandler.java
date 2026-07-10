@@ -43,8 +43,7 @@ public class MixinClientPlayNetworkHandler {
     private void onHandleMovePlayerPost(ClientboundPlayerPositionPacket packet, CallbackInfo ci) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || Homovore.rotationManager == null) return;
-        NoRotateModule noRotate = Homovore.moduleManager.getModuleByClass(NoRotateModule.class);
-        if (Homovore.rotationManager.isSilentActive() || (noRotate != null && noRotate.isEnabled())) {
+        if (Homovore.rotationManager.isSilentActive() || NoRotateModule.isActive()) {
             mc.player.setYRot(rotation$prevYaw);
             mc.player.setXRot(rotation$prevPitch);
         }

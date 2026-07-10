@@ -9,6 +9,7 @@ import dev.leonetic.features.modules.Module;
 import dev.leonetic.features.modules.client.TargetsModule;
 import dev.leonetic.features.modules.world.SpeedMineModule;
 import dev.leonetic.features.settings.Setting;
+import dev.leonetic.util.InteractionUtil;
 import dev.leonetic.util.MathUtil;
 import dev.leonetic.util.PlaceUtil;
 import dev.leonetic.util.inventory.InventoryUtil;
@@ -29,6 +30,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.Shapes;
 
 import java.awt.Color;
 import java.util.EnumSet;
@@ -48,6 +50,8 @@ public class AutoMineModule extends Module {
     private final Setting<SortPriority> targetPriority = mode("Priority", SortPriority.Angle);
     private final Setting<Boolean> ignoreNakeds = bool("IgnoreNakeds", true);
     private final Setting<ExtendBreakMode> extendBreakMode = mode("Extend", ExtendBreakMode.Long);
+    private final Setting<Boolean> underMine = bool("UnderMine", true);
+    private final Setting<Boolean> crawlMine = bool("CrawlMine", false);
     private final Setting<AntiSwimMode> antiSwim = mode("AntiSwim", AntiSwimMode.None);
     private final Setting<AntiSurroundMode> antiSurroundMode = mode("AntiSurround", AntiSurroundMode.Auto);
     private final Setting<Boolean> antiSurroundInnerSnap = bool("InnerSnap", true);
@@ -57,6 +61,13 @@ public class AutoMineModule extends Module {
     private final Setting<Boolean> glassPush     = bool("GlassPush", false);
     private final Setting<Integer> glassAttempts = num("GlassAttempts", 2, 1, 5);
 
+    private final Setting<Boolean> glassRender = bool("GlassRender", true).setPage("Render");
+    private final Setting<Float> glassFadeTime = num("GlassFadeTime", 0.5f, 0.05f, 2.0f).setPage("Render")
+            .setVisibility(v -> glassRender.getValue());
+    private final Setting<Color> glassFillColor = color("GlassFillColor", 255, 255, 255, 50).setPage("Render")
+            .setVisibility(v -> glassRender.getValue());
+    private final Setting<Color> glassOutlineColor = color("GlassOutlineColor", 255, 255, 255, 255).setPage("Render")
+            .setVisibility(v -> glassRender.getValue());
     private final Setting<Boolean> renderDebugScores = bool("DebugScores", false).setPage("Render");
 
     private Player targetPlayer = null;
@@ -69,6 +80,8 @@ public class AutoMineModule extends Module {
 
     private BlockPos glassTargetPos = null;
     private int glassUsedAttempts = 0;
+    private BlockPos glassRenderPos = null;
+    private long glassRenderStart = 0L;
 
     private final Long2LongOpenHashMap enemyBreaking = new Long2LongOpenHashMap();
     private static final long ENEMY_BREAK_TTL_MS = 1000;
@@ -103,6 +116,7 @@ public class AutoMineModule extends Module {
         ignorePos = null;
         enemyBreaking.clear();
         resetGlass();
+        glassRenderPos = null;
     }
 
     @Subscribe
@@ -189,6 +203,8 @@ public class AutoMineModule extends Module {
         SpeedMineModule mine = speedMine();
         if (mine == null) return;
 
+        if (tryCrawlMine(mine)) return;
+
         BlockState selfFeetBlock = mc.level.getBlockState(mc.player.blockPosition());
         BlockState selfHeadBlock = mc.level.getBlockState(mc.player.blockPosition().above());
         BlockPos selfHeadPos = mc.player.blockPosition().above();
@@ -249,6 +265,25 @@ public class AutoMineModule extends Module {
         if (!targetBlocks.isEmpty()) {
             mine.silentBreakBlock(targetBlocks.remove(), 10);
         }
+    }
+
+    private boolean tryCrawlMine(SpeedMineModule mine) {
+        if (!crawlMine.getValue()) return false;
+        if (mc.player.isCrouching()) return false;
+
+        BlockPos feetPos = mc.player.blockPosition();
+        BlockPos headPos = feetPos.above();
+        BlockState feetBlock = mc.level.getBlockState(feetPos);
+        BlockState headBlock = mc.level.getBlockState(headPos);
+
+        if (!isBlocked(feetPos, feetBlock) || !isBlocked(headPos, headBlock)) return false;
+        if (!InteractionUtil.canBreak(feetPos, feetBlock)) return false;
+
+        return mine.silentBreakBlock(feetPos, 200);
+    }
+
+    private boolean isBlocked(BlockPos pos, BlockState state) {
+        return !state.canBeReplaced() && state.getShape(mc.level, pos) != Shapes.empty();
     }
 
     private Player selectTarget() {
@@ -326,6 +361,8 @@ public class AutoMineModule extends Module {
         if (placeGlass(pos)) {
             glassUsedAttempts++;
             mine.holdRebreak(pos, 5);
+            glassRenderPos = pos.immutable();
+            glassRenderStart = System.currentTimeMillis();
         }
     }
 
@@ -338,7 +375,7 @@ public class AutoMineModule extends Module {
     }
 
     private boolean placeGlass(BlockPos pos) {
-        Result glass = InventoryUtil.find(Items.GLASS, EnumSet.of(ResultType.HOTBAR));
+        Result glass = InventoryUtil.find(Items.GLASS, InventoryUtil.PLACE_SCOPE);
         if (!glass.found()) return false;
         if (!PlaceUtil.canPlace(pos)) return false;
         if (!Homovore.placementManager.enqueue(pos, glass.slot())) return false;
@@ -442,9 +479,11 @@ public class AutoMineModule extends Module {
                 if (isBlockInFeet(surround)) continue;
                 checkPos.add(new CheckPos(surround, CheckPosType.Surround));
 
-                BlockPos base = surround.below();
-                if (canBreak(base, mc.level.getBlockState(base))) {
-                    checkPos.add(new CheckPos(base, CheckPosType.TerrainBase));
+                if (underMine.getValue()) {
+                    BlockPos base = surround.below();
+                    if (canBreak(base, mc.level.getBlockState(base))) {
+                        checkPos.add(new CheckPos(base, CheckPosType.TerrainBase));
+                    }
                 }
 
                 switch (extendBreakMode.getValue()) {
@@ -596,6 +635,25 @@ public class AutoMineModule extends Module {
         return score;
     }
 
+    @Override
+    public void onRender3D(Render3DEvent event) {
+        if (nullCheck() || !glassRender.getValue() || glassRenderPos == null) return;
+
+        long age = System.currentTimeMillis() - glassRenderStart;
+        double fadeMs = glassFadeTime.getValue() * 1000.0;
+        if (age > fadeMs) {
+            glassRenderPos = null;
+            return;
+        }
+        double t = age / fadeMs;
+        Color fc = glassFillColor.getValue();
+        Color oc = glassOutlineColor.getValue();
+        RenderUtil.drawBoxFilled(event.getMatrix(), glassRenderPos,
+                new Color(fc.getRed(), fc.getGreen(), fc.getBlue(), (int) (fc.getAlpha() * (1 - t))));
+        RenderUtil.drawBox(event.getMatrix(), glassRenderPos,
+                new Color(oc.getRed(), oc.getGreen(), oc.getBlue(), (int) (oc.getAlpha() * (1 - t))), 1.5f);
+    }
+
     @Subscribe
     private void onRenderDebug(Render3DEvent event) {
         if (nullCheck() || !renderDebugScores.getValue() || targetPlayer == null) return;
@@ -661,6 +719,7 @@ public class AutoMineModule extends Module {
 
     private boolean canBreak(BlockPos pos, BlockState state) {
         if (state.isAir()) return false;
+        if (state.is(Blocks.FIRE) || state.is(Blocks.SOUL_FIRE)) return false;
         return state.getDestroySpeed(mc.level, pos) >= 0;
     }
 

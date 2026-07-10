@@ -7,6 +7,8 @@ import net.minecraft.client.gui.screens.ChatScreen;
 public abstract class HudModule implements Util {
     private static final int CHAT_INPUT_HEIGHT = 14;
 
+    protected static final int SCREEN_MARGIN = 2;
+
     private final String name;
 
     public HudModule(String name) {
@@ -33,5 +35,16 @@ public abstract class HudModule implements Util {
 
     protected int bottomAnchor() {
         return screenHeight() - chatOffset();
+    }
+
+    protected int lineX(HudPosition pos, int lineWidth) {
+        return pos.isLeft() ? SCREEN_MARGIN : screenWidth() - SCREEN_MARGIN - lineWidth;
+    }
+
+    protected int blockTop(HudPosition pos, int ownLines, int linesBelow, int gap) {
+        if (pos.isBottom()) {
+            return bottomAnchor() - SCREEN_MARGIN - (linesBelow + ownLines) * mc.font.lineHeight - gap;
+        }
+        return screenHeight() / 2;
     }
 }

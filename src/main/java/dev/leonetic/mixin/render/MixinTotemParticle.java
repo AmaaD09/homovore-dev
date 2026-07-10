@@ -1,8 +1,10 @@
 package dev.leonetic.mixin.render;
 
 import dev.leonetic.features.modules.render.PopEffectsModule;
+import dev.leonetic.util.render.SeeThroughParticle;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.particle.SimpleAnimatedParticle;
+import net.minecraft.client.particle.SingleQuadParticle;
 import net.minecraft.client.particle.SpriteSet;
 import net.minecraft.client.particle.TotemParticle;
 import net.minecraft.core.particles.ParticleTypes;
@@ -30,5 +32,16 @@ public abstract class MixinTotemParticle extends SimpleAnimatedParticle {
 
         this.setColor(module.getRgb(yellowVariant));
         this.quadSize *= module.getScale();
+    }
+
+    @Override
+    public SingleQuadParticle.Layer getLayer() {
+        PopEffectsModule module = PopEffectsModule.get();
+        if (module != null
+                && module.shouldCustomize(ParticleTypes.TOTEM_OF_UNDYING)
+                && module.throughWalls.getValue()) {
+            return SeeThroughParticle.TRANSLUCENT_LAYER;
+        }
+        return super.getLayer();
     }
 }

@@ -4,12 +4,12 @@ import dev.leonetic.Homovore;
 import dev.leonetic.event.impl.entity.player.TickEvent;
 import dev.leonetic.manager.PlacementManager;
 import dev.leonetic.manager.RotationRequest;
-import dev.leonetic.mixin.entity.FireworkRocketEntityAccessor;
 import dev.leonetic.util.MathUtil;
 import dev.leonetic.util.PlaceUtil;
 import dev.leonetic.event.impl.render.Render3DEvent;
 import dev.leonetic.event.system.Subscribe;
 import dev.leonetic.features.modules.Module;
+import dev.leonetic.features.modules.render.BreakIndicatorsModule;
 import dev.leonetic.features.modules.world.SpeedMineModule;
 import dev.leonetic.features.settings.Setting;
 import dev.leonetic.util.inventory.InventoryUtil;
@@ -37,12 +37,15 @@ public class SurroundModule extends Module {
 
     private final Setting<Boolean> attack        = bool("Attack", true).setPage("General");
 
+    private final Setting<Boolean> mineProtect   = bool("MineProtect", true).setPage("General");
+
     private final Setting<Boolean> fireworks     = bool("Fireworks", true).setPage("General");
+    private final Setting<Boolean> crystalProtect = bool("CrystalProtect", true).setPage("General");
 
     private final Setting<Boolean> avoidHelping  = bool("AvoidHelpingOpponents", true).setPage("General");
 
     private final Setting<Boolean> selfTrap      = bool("SelfTrap", true).setPage("SelfTrap");
-    private final Setting<SelfTrapMode> selfTrapMode = mode("SelfTrapMode", SelfTrapMode.None).setPage("SelfTrap");
+    private final Setting<SelfTrapMode> selfTrapMode = mode("SelfTrapMode", SelfTrapMode.Smart).setPage("SelfTrap");
     private final Setting<Boolean> selfTrapHead  = bool("SelfTrapHead", true).setPage("SelfTrap");
     private final Setting<Boolean> crawlTrap     = bool("CrawlTrap", true).setPage("SelfTrap");
 
@@ -72,34 +75,31 @@ public class SurroundModule extends Module {
     private final Map<BlockPos, Long> fireworkDeployedAt = new HashMap<>();
     private static final long FIREWORK_REDEPLOY_COOLDOWN_MS = 500;
 
-    private static final int FIREWORK_REDEPLOY_MARGIN_TICKS = 5;
-
     private final Set<BlockPos> extendPoses = ConcurrentHashMap.newKeySet();
 
     private final Set<BlockPos> opponentSurroundPoses = ConcurrentHashMap.newKeySet();
 
     private final Set<BlockPos> helpBlockedPoses = ConcurrentHashMap.newKeySet();
 
-    private final Map<BlockPos, Deque<Long>> breakTimes = new ConcurrentHashMap<>();
-    private static final long REBREAK_WINDOW_MS = 20 * 50;
-    private static final int REBREAK_THRESHOLD = 2;
+    private final Map<BlockPos, Integer> breakCounts = new ConcurrentHashMap<>();
+    private static final int SAFE_REBREAK_THRESHOLD = 3;
 
     private final PlacementManager.PlacementListener airRefillListener = (pos, nowAir) -> {
-
-        ownedQueued.remove(pos);
-        if (!nowAir) return;
 
         boolean wanted = wantedPoses.contains(pos);
         if (!wanted && !extendPoses.contains(pos)) return;
 
-        recordBreak(pos, System.currentTimeMillis());
+        boolean wasOwned = ownedQueued.remove(pos);
+        if (!nowAir) {
+            if (wasOwned) breakCounts.merge(pos.immutable(), 1, Integer::sum);
+            return;
+        }
 
         if (fireworkPoses.contains(pos)) return;
 
         if (speedMineClaims(pos)) return;
 
-        if (cachedFireworkSlot >= 0 && isHot(pos, System.currentTimeMillis())
-                && isFullBlock(pos.above()) && isFullBlock(pos.below())) {
+        if (cachedFireworkSlot >= 0 && canRocket(pos, System.currentTimeMillis())) {
             fireworkPoses.add(pos.immutable());
             return;
         }
@@ -116,8 +116,11 @@ public class SurroundModule extends Module {
     };
 
     private long lastCrystalNearHead  = 0;
-    private long lastCrystalForExtend = 0;
     private long lastAttackTime       = 0;
+
+    private BlockPos lastExtendOffset = null;
+    private long     lastExtendThreat = 0;
+    private static final long EXTEND_HOLD_MS = 1000;
 
     private static final Direction[] HORIZONTALS = {
             Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST
@@ -143,12 +146,13 @@ public class SurroundModule extends Module {
         opponentSurroundPoses.clear();
         helpBlockedPoses.clear();
         fireworkDeployedAt.clear();
-        breakTimes.clear();
+        breakCounts.clear();
         cachedObsSlot = -1;
         cachedFireworkSlot = -1;
         renderMap.clear();
+        lastExtendOffset = null;
+        lastExtendThreat = 0;
         lastCrystalNearHead  = 0;
-        lastCrystalForExtend = 0;
         lastAttackTime       = 0;
     }
 
@@ -156,7 +160,7 @@ public class SurroundModule extends Module {
     private void onTick(TickEvent event) {
         if (nullCheck() || mc.screen != null) return;
 
-        var obs = InventoryUtil.find(Items.OBSIDIAN, InventoryUtil.HOTBAR_SCOPE);
+        var obs = InventoryUtil.find(Items.OBSIDIAN, InventoryUtil.PLACE_SCOPE);
         if (!obs.found() || obs.type() == ResultType.OFFHAND) {
             cachedObsSlot = -1;
             wantedPoses.clear();
@@ -168,13 +172,15 @@ public class SurroundModule extends Module {
 
         cachedFireworkSlot = -1;
         if (fireworks.getValue()) {
-            var fw = InventoryUtil.find(Items.FIREWORK_ROCKET, InventoryUtil.HOTBAR_SCOPE);
+            var fw = InventoryUtil.find(Items.FIREWORK_ROCKET, InventoryUtil.PLACE_SCOPE);
             if (fw.found() && fw.type() != ResultType.OFFHAND) cachedFireworkSlot = fw.slot();
         }
 
         List<BlockPos> placePoses = new ArrayList<>();
-        List<BlockPos> cornerPlacePoses = new ArrayList<>();
+        List<BlockPos> rebreakPlacePoses = new ArrayList<>();
+        List<BlockPos> rebreakSides = new ArrayList<>();
         List<BlockPos> fireworkPlacePoses = new ArrayList<>();
+        List<BlockPos> feetPositions = new ArrayList<>();
         wantedPoses.clear();
         fireworkPoses.clear();
         extendPoses.clear();
@@ -191,6 +197,7 @@ public class SurroundModule extends Module {
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) {
                 BlockPos feetPos = new BlockPos(x, feetY, z);
+                feetPositions.add(feetPos);
 
                 for (Direction dir : HORIZONTALS) {
                     BlockPos adjacent = feetPos.relative(dir);
@@ -208,6 +215,10 @@ public class SurroundModule extends Module {
                         placePoses.add(adjacent);
                     }
 
+                    if (isHot(adjacent, now)) {
+                        rebreakSides.add(adjacent.immutable());
+                    }
+
                     if (selfTrap.getValue() && selfTrapMode.getValue() != SelfTrapMode.None) {
                         checkSelfTrap(adjacent, now, placePoses);
                     }
@@ -218,9 +229,6 @@ public class SurroundModule extends Module {
                         tryFirework(extendPos, now, fireworkPlacePoses);
                     }
 
-                    if (extend.getValue() && extendMode.getValue() != ExtendMode.None) {
-                        checkExtend(feetPos, dir, now, placePoses);
-                    }
                 }
 
                 BlockPos below = feetPos.below();
@@ -233,24 +241,31 @@ public class SurroundModule extends Module {
             }
         }
 
-        // Diagonal corners of the footprint. These are placed after the edges
-        // (appended to the queue below), so the edge ring is always secured
-        // first, then the corners close the diagonal gaps.
-        BlockPos[] corners = {
-                new BlockPos(minX - 1, feetY, minZ - 1),
-                new BlockPos(minX - 1, feetY, maxZ + 1),
-                new BlockPos(maxX + 1, feetY, minZ - 1),
-                new BlockPos(maxX + 1, feetY, maxZ + 1)
-        };
-        for (BlockPos corner : corners) {
-            BlockState state = mc.level.getBlockState(corner);
+        if (extend.getValue() && extendMode.getValue() != ExtendMode.None) {
+            computeExtend(feetPositions, placePoses, now);
+        }
 
-            wantedPoses.add(corner.immutable());
+        if (mineProtect.getValue()) {
+            applyMineProtect(feetPositions, placePoses);
+        }
 
-            if (tryFirework(corner, now, fireworkPlacePoses)) {
-                // firework handled this corner
-            } else if (state.isAir() || state.canBeReplaced()) {
-                cornerPlacePoses.add(corner);
+        if (fireworks.getValue()) {
+            for (BlockPos rebreak : rebreakSides) {
+                for (Direction dir : HORIZONTALS) {
+                    BlockPos neighbor = rebreak.relative(dir);
+
+                    if (neighbor.getY() == feetY
+                            && neighbor.getX() >= minX && neighbor.getX() <= maxX
+                            && neighbor.getZ() >= minZ && neighbor.getZ() <= maxZ) continue;
+                    if (wantedPoses.contains(neighbor)) continue;
+
+                    wantedPoses.add(neighbor.immutable());
+
+                    BlockState state = mc.level.getBlockState(neighbor);
+                    if (state.isAir() || state.canBeReplaced()) {
+                        rebreakPlacePoses.add(neighbor);
+                    }
+                }
             }
         }
 
@@ -275,6 +290,7 @@ public class SurroundModule extends Module {
         if (Homovore.placementManager.placeFireworksAlt(fireworkUsePoses, Direction.DOWN, cachedFireworkSlot)) {
             for (BlockPos pos : fireworkUsePoses) {
                 fireworkDeployedAt.put(pos.immutable(), now);
+                breakCounts.remove(pos);
             }
         }
 
@@ -284,38 +300,23 @@ public class SurroundModule extends Module {
         Vec3 predicted = mc.player.position().add(mc.player.getDeltaMovement().scale(0.5));
         placePoses.sort(Comparator.comparingDouble(p -> Vec3.atCenterOf(p).distanceToSqr(predicted)));
 
-        // Corners are queued strictly after every edge/floor/head block so the
-        // main surround is always completed first; sort them among themselves.
-        cornerPlacePoses.sort(Comparator.comparingDouble(p -> Vec3.atCenterOf(p).distanceToSqr(predicted)));
-        placePoses.addAll(cornerPlacePoses);
+        if (fireworks.getValue()) {
+            rebreakPlacePoses.sort(Comparator.comparingDouble(p -> Vec3.atCenterOf(p).distanceToSqr(predicted)));
+            placePoses.addAll(rebreakPlacePoses);
+        }
 
         if (attack.getValue() && now - lastAttackTime >= 50) {
-
-            List<BlockPos> attackPoses = new ArrayList<>(wantedPoses);
-            attackPoses.sort(Comparator.comparingDouble(p -> Vec3.atCenterOf(p).distanceToSqr(predicted)));
-            for (BlockPos pos : attackPoses) {
-                EndCrystal crystal = getCrystalNear(pos);
-                if (crystal == null) continue;
-
-                Vec3 eyePos = mc.player.getEyePosition(1.0f);
-                Vec3 crystalCenter = crystal.position().add(0, crystal.getBbHeight() / 2.0, 0);
-                float[] angles = MathUtil.calcAngle(eyePos, crystalCenter);
-
-                Homovore.rotationManager.submit(new RotationRequest(
-                    "Surround", 100, angles[0], angles[1], RotationRequest.Mode.SILENT
-                ));
-
-                float sYaw = Homovore.rotationManager.getServerYaw();
-                float sPitch = Homovore.rotationManager.getServerPitch();
-                Vec3 lookVec = getLookVector(sYaw, sPitch);
-                Vec3 reachEnd = eyePos.add(lookVec.scale(6.0));
-
-                if (crystal.getBoundingBox().clip(eyePos, reachEnd).isPresent()) {
-                    mc.gameMode.attack(mc.player, crystal);
-                    crystal.discard();
-                    lastAttackTime = now;
-
-                    Homovore.placementManager.forceResetPlaceCooldown(pos);
+            EndCrystal crystal = findThreateningCrystal();
+            if (crystal != null) {
+                BlockPos crystalCell = crystal.blockPosition();
+                breakCrystal(crystal);
+                lastAttackTime = now;
+                for (BlockPos p : wantedPoses) {
+                    if (Math.abs(p.getX() - crystalCell.getX()) <= 1
+                            && Math.abs(p.getZ() - crystalCell.getZ()) <= 1
+                            && Math.abs(p.getY() - crystalCell.getY()) <= 2) {
+                        Homovore.placementManager.forceResetPlaceCooldown(p);
+                    }
                 }
             }
         }
@@ -338,13 +339,6 @@ public class SurroundModule extends Module {
         renderMap.entrySet().removeIf(e -> now - e.getValue() > fadeMs);
 
         fireworkDeployedAt.entrySet().removeIf(e -> now - e.getValue() > FIREWORK_REDEPLOY_COOLDOWN_MS);
-
-        breakTimes.entrySet().removeIf(e -> {
-            synchronized (e.getValue()) {
-                Long newest = e.getValue().peekLast();
-                return newest == null || now - newest > REBREAK_WINDOW_MS;
-            }
-        });
     }
 
     @Override
@@ -386,14 +380,88 @@ public class SurroundModule extends Module {
         return !mc.level.getEntitiesOfClass(EndCrystal.class, box).isEmpty();
     }
 
-    private EndCrystal getCrystalNear(BlockPos pos) {
-        AABB box = new AABB(
-                pos.getX() - 1, pos.getY() - 1, pos.getZ() - 1,
-                pos.getX() + 1, pos.getY() + 1, pos.getZ() + 1
-        );
+    private EndCrystal findThreateningCrystal() {
+        Vec3 eye = mc.player.getEyePosition(1.0f);
+        AABB search = mc.player.getBoundingBox().inflate(6.0);
+        EndCrystal best = null;
+        double bestSq = Double.MAX_VALUE;
+        for (EndCrystal c : mc.level.getEntitiesOfClass(EndCrystal.class, search)) {
+            if (!threatensSurround(c)) continue;
+            AABB box = c.getBoundingBox();
+            double d = distSqToBox(eye, box);
+            if (d >= bestSq) continue;
+            if (d > 36.0) continue;
+            bestSq = d;
+            best = c;
+        }
+        return best;
+    }
 
-        return mc.level.getEntitiesOfClass(EndCrystal.class, box)
-                .stream().findFirst().orElse(null);
+    private boolean threatensSurround(EndCrystal crystal) {
+        BlockPos cell = crystal.blockPosition();
+        return nearSurroundCell(cell) || nearSurroundCell(cell.below()) || nearFootprintPerimeter(cell) || nearFootprintPerimeter(cell.below());
+    }
+
+    private boolean nearSurroundCell(BlockPos p) {
+        if (wantedPoses.contains(p) || extendPoses.contains(p)) return true;
+        for (Direction dir : HORIZONTALS) {
+            BlockPos n = p.relative(dir);
+            if (wantedPoses.contains(n) || extendPoses.contains(n)) return true;
+        }
+        return false;
+    }
+
+    private boolean nearFootprintPerimeter(BlockPos p) {
+        AABB bounds = mc.player.getBoundingBox();
+        int feetY = mc.player.blockPosition().getY();
+        if (Math.abs(p.getY() - feetY) > 2) return false;
+
+        int minX = PlaceUtil.minCell(bounds.minX);
+        int maxX = PlaceUtil.maxCell(bounds.maxX);
+        int minZ = PlaceUtil.minCell(bounds.minZ);
+        int maxZ = PlaceUtil.maxCell(bounds.maxZ);
+
+        return p.getX() >= minX - 2 && p.getX() <= maxX + 2
+                && p.getZ() >= minZ - 2 && p.getZ() <= maxZ + 2
+                && (p.getX() < minX || p.getX() > maxX || p.getZ() < minZ || p.getZ() > maxZ);
+    }
+
+    private void breakCrystal(EndCrystal crystal) {
+        Vec3 eye = mc.player.getEyePosition(1.0f);
+        Vec3 hit = closestPointToEye(eye, crystal.getBoundingBox());
+        float[] angles = MathUtil.calcAngle(eye, hit);
+        Homovore.rotationManager.submit(new RotationRequest(
+                "Surround", 100, angles[0], angles[1], RotationRequest.Mode.SILENT));
+        mc.gameMode.attack(mc.player, crystal);
+    }
+
+    private Vec3 closestPointToEye(Vec3 eye, AABB box) {
+        double x = eye.x;
+        double y = eye.y;
+        double z = eye.z;
+        double vec = 1.0 / 16.0;
+        double eps = 1e-9;
+
+        if (eye.x < box.minX) x = box.minX;
+        else if (eye.x > box.maxX) x = box.maxX;
+        if (eye.y < box.minY) y = box.minY;
+        else if (eye.y > box.maxY) y = box.maxY;
+        if (eye.z < box.minZ) z = box.minZ;
+        else if (eye.z > box.maxZ) z = box.maxZ;
+
+        if (Math.abs(x - box.minX) < eps) x = Math.min(box.minX + vec, box.maxX - eps);
+        else if (Math.abs(x - box.maxX) < eps) x = Math.max(box.maxX - vec, box.minX + eps);
+        if (Math.abs(z - box.minZ) < eps) z = Math.min(box.minZ + vec, box.maxZ - eps);
+        else if (Math.abs(z - box.maxZ) < eps) z = Math.max(box.maxZ - vec, box.minZ + eps);
+
+        return new Vec3(x, y, z);
+    }
+
+    private static double distSqToBox(Vec3 p, AABB box) {
+        double dx = p.x < box.minX ? box.minX - p.x : (p.x > box.maxX ? p.x - box.maxX : 0);
+        double dy = p.y < box.minY ? box.minY - p.y : (p.y > box.maxY ? p.y - box.maxY : 0);
+        double dz = p.z < box.minZ ? box.minZ - p.z : (p.z > box.maxZ ? p.z - box.maxZ : 0);
+        return dx * dx + dy * dy + dz * dz;
     }
 
     private void checkSelfTrap(BlockPos adjacent, long now, List<BlockPos> placePoses) {
@@ -419,34 +487,129 @@ public class SurroundModule extends Module {
         }
     }
 
-    private void checkExtend(BlockPos feet, Direction dir, long now, List<BlockPos> placePoses) {
-        BlockPos extendPos = feet.relative(dir, 2);
-        boolean should = extendMode.getValue() == ExtendMode.Always;
-
-        if (extendMode.getValue() == ExtendMode.Smart) {
-            if (intersectsCrystal(extendPos)) {
-                lastCrystalForExtend = now;
+    private void computeExtend(List<BlockPos> feetPositions, List<BlockPos> placePoses, long now) {
+        if (extendMode.getValue() == ExtendMode.Always) {
+            for (BlockPos feet : feetPositions) {
+                for (Direction dir : HORIZONTALS) {
+                    placeExtendBlocks(placePoses, feet, new BlockPos(dir.getStepX(), 0, dir.getStepZ()));
+                }
             }
-
-            if (now - lastCrystalForExtend < 1000) {
-                should = true;
-            }
+            return;
         }
 
-        if (should) {
-            BlockState state = mc.level.getBlockState(extendPos);
-            BlockState below = mc.level.getBlockState(extendPos.below());
+        EndCrystal crystal = findExtendCrystal();
+        if (crystal != null) {
+            lastExtendOffset = crystal.blockPosition().subtract(mc.player.blockPosition());
+            lastExtendThreat = now;
+        }
 
-            if ((below.is(Blocks.OBSIDIAN) || below.is(Blocks.BEDROCK))) {
-                wantedPoses.add(extendPos.immutable());
+        if (lastExtendOffset == null || now - lastExtendThreat >= EXTEND_HOLD_MS) return;
 
-                if (fireworkPoses.contains(extendPos)) {
-                    return;
-                }
-                if (state.isAir() || state.canBeReplaced()) {
-                    placePoses.add(extendPos);
-                }
+        for (BlockPos feet : feetPositions) {
+            placeExtendBlocks(placePoses, feet, lastExtendOffset);
+        }
+    }
+
+    private EndCrystal findExtendCrystal() {
+        AABB box = mc.player.getBoundingBox().inflate(1.5, 0.5, 1.5).move(0, 1, 0);
+        Vec3 eye = mc.player.getEyePosition();
+        EndCrystal closest = null;
+        double bestSq = Double.MAX_VALUE;
+        for (EndCrystal c : mc.level.getEntitiesOfClass(EndCrystal.class, box)) {
+            double d = c.distanceToSqr(eye);
+            if (d < bestSq) {
+                bestSq = d;
+                closest = c;
             }
+        }
+        return closest;
+    }
+
+    private void placeExtendBlocks(List<BlockPos> out, BlockPos feetPos, BlockPos crystalOffset) {
+        if (crystalOffset == null) return;
+
+        int normDx = Integer.signum(crystalOffset.getX());
+        int normDz = Integer.signum(crystalOffset.getZ());
+
+        boolean isDiagonal = normDx != 0 && normDz != 0;
+        boolean isCardinal = (normDx != 0) ^ (normDz != 0);
+
+        if (isDiagonal) {
+            addExtendIfReplaceable(out, feetPos.offset(normDx, 0, normDz));
+            addExtendIfReplaceable(out, feetPos.offset(normDx * 2, 0, 0));
+            addExtendIfReplaceable(out, feetPos.offset(0, 0, normDz * 2));
+        } else if (isCardinal) {
+            BlockPos diagonal1, diagonal2, straightBlock;
+            if (normDx != 0) {
+                diagonal1 = feetPos.offset(normDx, 0, 1);
+                diagonal2 = feetPos.offset(normDx, 0, -1);
+                straightBlock = feetPos.offset(normDx * 2, 0, 0);
+            } else {
+                diagonal1 = feetPos.offset(1, 0, normDz);
+                diagonal2 = feetPos.offset(-1, 0, normDz);
+                straightBlock = feetPos.offset(0, 0, normDz * 2);
+            }
+            addExtendIfReplaceable(out, diagonal1);
+            addExtendIfReplaceable(out, diagonal2);
+            addExtendIfReplaceable(out, straightBlock);
+        }
+    }
+
+    private void applyMineProtect(List<BlockPos> feetPositions, List<BlockPos> placePoses) {
+        BreakIndicatorsModule indicators = Homovore.moduleManager.getModuleByClass(BreakIndicatorsModule.class);
+        if (indicators == null || !indicators.isEnabled()) return;
+
+        for (BreakIndicatorsModule.BreakInfo info : indicators.getActiveBreaksSnapshot().values()) {
+            Player player = info.player();
+            if (player == null || player == mc.player || Homovore.friendManager.isFriend(player)) continue;
+
+            applyMineProtectBlock(feetPositions, placePoses, info.pos());
+        }
+    }
+
+    private void applyMineProtectBlock(List<BlockPos> feetPositions, List<BlockPos> placePoses, BlockPos mined) {
+        if (mined == null) return;
+
+        for (BlockPos feet : feetPositions) {
+            if (mined.getY() != feet.getY()) continue;
+            int dx = mined.getX() - feet.getX();
+            int dz = mined.getZ() - feet.getZ();
+            if (Math.abs(dx) + Math.abs(dz) != 1) continue;
+
+            addMineProtectIfReplaceable(placePoses, mined.above());
+            addMineProtectIfReplaceable(placePoses, mined.below());
+            if (dx != 0) {
+                addMineProtectIfReplaceable(placePoses, feet.offset(dx, 0, 1));
+                addMineProtectIfReplaceable(placePoses, feet.offset(dx, 0, -1));
+                addMineProtectIfReplaceable(placePoses, feet.offset(dx * 2, 0, 0));
+            } else {
+                addMineProtectIfReplaceable(placePoses, feet.offset(1, 0, dz));
+                addMineProtectIfReplaceable(placePoses, feet.offset(-1, 0, dz));
+                addMineProtectIfReplaceable(placePoses, feet.offset(0, 0, dz * 2));
+            }
+        }
+    }
+
+    private void addMineProtectIfReplaceable(List<BlockPos> out, BlockPos pos) {
+        BlockState state = mc.level.getBlockState(pos);
+        if (state.isAir() || state.canBeReplaced()) {
+            wantedPoses.add(pos.immutable());
+            extendPoses.add(pos.immutable());
+            out.add(pos);
+        }
+    }
+
+    private void addExtendIfReplaceable(List<BlockPos> out, BlockPos pos) {
+        BlockState below = mc.level.getBlockState(pos.below());
+        if (!below.is(Blocks.OBSIDIAN) && !below.is(Blocks.BEDROCK)) return;
+
+        wantedPoses.add(pos.immutable());
+        extendPoses.add(pos.immutable());
+        if (fireworkPoses.contains(pos)) return;
+
+        BlockState state = mc.level.getBlockState(pos);
+        if (state.isAir() || state.canBeReplaced()) {
+            out.add(pos);
         }
     }
 
@@ -539,40 +702,57 @@ public class SurroundModule extends Module {
     private boolean tryFirework(BlockPos pos, long now, List<BlockPos> out) {
         if (cachedFireworkSlot < 0) return false;
 
-        if (!isFullBlock(pos.above())) return false;
-
-        if (!isFullBlock(pos.below())) return false;
-
-        if (!isHot(pos, now)) return false;
-        fireworkPoses.add(pos.immutable());
-        if (speedMineClaims(pos)) return true;
-        if (hasLiveFireworkAt(pos)) return true;
+        if (hasLiveFireworkAt(pos)) {
+            fireworkPoses.add(pos.immutable());
+            return true;
+        }
         Long last = fireworkDeployedAt.get(pos);
-        if (last != null && now - last < FIREWORK_REDEPLOY_COOLDOWN_MS) return true;
+        if (last != null && now - last < FIREWORK_REDEPLOY_COOLDOWN_MS) {
+            fireworkPoses.add(pos.immutable());
+            return true;
+        }
+
+        if (!canRocket(pos, now)) return false;
+        if (speedMineClaims(pos)) return false;
+
+        fireworkPoses.add(pos.immutable());
         out.add(pos);
         return true;
     }
 
-    private void recordBreak(BlockPos pos, long now) {
-        Deque<Long> times = breakTimes.computeIfAbsent(pos.immutable(), p -> new ArrayDeque<>());
-        synchronized (times) {
-            times.addLast(now);
-            while (!times.isEmpty() && now - times.peekFirst() > REBREAK_WINDOW_MS) {
-                times.pollFirst();
-            }
-        }
+    private boolean canRocket(BlockPos pos, long now) {
+        return (isHot(pos, now) || crystalProtect.getValue() && hasCrystalAt(pos))
+                && isFullBlock(pos.above()) && isCrystalBase(pos.below()) && hasFireworkCornerSupport(pos);
+    }
+
+    private boolean isCrystalBase(BlockPos pos) {
+        BlockState state = mc.level.getBlockState(pos);
+        return state.is(Blocks.OBSIDIAN) || state.is(Blocks.BEDROCK);
+    }
+
+    private boolean hasCrystalAt(BlockPos pos) {
+        AABB box = new AABB(pos).inflate(0.5, 1.0, 0.5);
+        return !mc.level.getEntitiesOfClass(EndCrystal.class, box).isEmpty();
+    }
+
+    private boolean hasFireworkCornerSupport(BlockPos pos) {
+        AABB bounds = mc.player.getBoundingBox();
+        int minX = PlaceUtil.minCell(bounds.minX);
+        int maxX = PlaceUtil.maxCell(bounds.maxX);
+        int minZ = PlaceUtil.minCell(bounds.minZ);
+        int maxZ = PlaceUtil.maxCell(bounds.maxZ);
+        int x = pos.getX();
+        int z = pos.getZ();
+
+        if (z < minZ && x >= minX && x <= maxX) return isFullBlock(pos.west()) && isFullBlock(pos.east());
+        if (z > maxZ && x >= minX && x <= maxX) return isFullBlock(pos.west()) && isFullBlock(pos.east());
+        if (x < minX && z >= minZ && z <= maxZ) return isFullBlock(pos.north()) && isFullBlock(pos.south());
+        if (x > maxX && z >= minZ && z <= maxZ) return isFullBlock(pos.north()) && isFullBlock(pos.south());
+        return false;
     }
 
     private boolean isHot(BlockPos pos, long now) {
-        Deque<Long> times = breakTimes.get(pos);
-        if (times == null) return false;
-        int count = 0;
-        synchronized (times) {
-            for (long t : times) {
-                if (now - t <= REBREAK_WINDOW_MS) count++;
-            }
-        }
-        return count > REBREAK_THRESHOLD;
+        return breakCounts.getOrDefault(pos, 0) >= SAFE_REBREAK_THRESHOLD;
     }
 
     private boolean isFullBlock(BlockPos pos) {
@@ -580,19 +760,12 @@ public class SurroundModule extends Module {
     }
 
     private boolean hasLiveFireworkAt(BlockPos pos) {
-        for (FireworkRocketEntity fw : mc.level.getEntitiesOfClass(FireworkRocketEntity.class, new AABB(pos))) {
-            FireworkRocketEntityAccessor acc = (FireworkRocketEntityAccessor) fw;
-            if (acc.homovore$getLifetime() - acc.homovore$getLife() > FIREWORK_REDEPLOY_MARGIN_TICKS) return true;
+        AABB box = new AABB(pos.getX() + 0.2, pos.getY(), pos.getZ() + 0.2,
+                pos.getX() + 0.8, pos.getY() + 4.0, pos.getZ() + 0.8);
+        for (FireworkRocketEntity fw : mc.level.getEntitiesOfClass(FireworkRocketEntity.class, box)) {
+            if (fw.isAlive()) return true;
         }
         return false;
-    }
-
-    private static Vec3 getLookVector(float yaw, float pitch) {
-        float f = (float) Math.cos(-yaw * 0.017453292F - Math.PI);
-        float g = (float) Math.sin(-yaw * 0.017453292F - Math.PI);
-        float h = -(float) Math.cos(-pitch * 0.017453292F);
-        float i = (float) Math.sin(-pitch * 0.017453292F);
-        return new Vec3(g * h, i, f * h);
     }
 
     private static Color withAlpha(Color c, int a) {

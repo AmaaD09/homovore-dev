@@ -24,10 +24,10 @@ import java.util.Map;
 
 public class PearlBlockerModule extends Module {
 
-    private final Setting<Boolean> render        = bool("Render", true);
-    private final Setting<Float>   fadeTime      = num("FadeTime", 1.0f, 0.05f, 2.0f);
-    private final Setting<Color>   fillColor     = color("FillColor", 255, 0, 0, 44);
-    private final Setting<Color>   outlineColor  = color("OutlineColor", 255, 0, 0, 44);
+    private final Setting<Boolean> render        = bool("Render", true).setPage("Render");
+    private final Setting<Float>   fadeTime      = num("FadeTime", 1.0f, 0.05f, 2.0f).setPage("Render");
+    private final Setting<Color>   fillColor     = color("FillColor", 255, 0, 0, 44).setPage("Render");
+    private final Setting<Color>   outlineColor  = color("OutlineColor", 255, 0, 0, 44).setPage("Render");
 
     private final Map<Integer, BlockPos> tracked = new HashMap<>();
     private final Map<BlockPos, Long> renderMap = new HashMap<>();
@@ -52,7 +52,7 @@ public class PearlBlockerModule extends Module {
     private void onTick(TickEvent event) {
         if (nullCheck()) return;
 
-        var obs = InventoryUtil.find(Items.OBSIDIAN, InventoryUtil.HOTBAR_SCOPE);
+        var obs = InventoryUtil.find(Items.OBSIDIAN, InventoryUtil.PLACE_SCOPE);
         if (!obs.found() || obs.type() == ResultType.OFFHAND) return;
         int obsSlot = obs.slot();
 

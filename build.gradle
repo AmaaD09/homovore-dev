@@ -87,6 +87,11 @@ java {
     }
 
     // (was: archivesBaseName = project.archives_base_name)
+    withSourcesJar()
+}
+
+sourcesJar {
+    dependsOn(generateBuildConfig)
 }
 
 jar {
