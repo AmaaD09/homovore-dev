@@ -166,7 +166,8 @@ public class AutoMineModule extends Module {
 
                     AABB crystalPlaceHitbox = new AABB(bp.getX(), bp.getY(), bp.getZ(),
                             bp.getX() + 1, bp.getY() + 2, bp.getZ() + 1);
-                    if (intersectsEntity(crystalPlaceHitbox, e -> !e.isSpectator())) continue;
+                    if (intersectsEntity(crystalPlaceHitbox,
+                            e -> !e.isSpectator() && !(e instanceof ItemEntity))) continue;
 
                     Vec3 crystalPos = new Vec3(bp.getX() + 0.5, bp.getY(), bp.getZ() + 0.5);
                     AABB crystalHitbox = new AABB(crystalPos.x - 1, crystalPos.y, crystalPos.z - 1,
@@ -346,10 +347,6 @@ public class AutoMineModule extends Module {
         }
 
         if (!itemInCrystalSpot(pos)) {
-
-            if (glassUsedAttempts > 0 && mc.level.getBlockState(pos).isAir()) {
-                crystal.preplaceCrystal(pos, true);
-            }
             glassUsedAttempts = 0;
             return;
         }

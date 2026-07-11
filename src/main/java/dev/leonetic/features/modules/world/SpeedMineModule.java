@@ -390,6 +390,17 @@ public class SpeedMineModule extends Module {
         mineSwapIdleTicks = 0;
     }
 
+    private void releaseMineSwapForPlacement() {
+        if (mineSwapHandle == null) return;
+        if (Homovore.swapManager.holdsActive(mineSwapHandle)
+                && InventoryUtil.selected() != mineSwapHandle.originalSlot) {
+            InventoryUtil.swap(mineSwapHandle.originalSlot);
+        }
+        Homovore.swapManager.release(mineSwapHandle);
+        mineSwapHandle = null;
+        mineSwapIdleTicks = 0;
+    }
+
     private boolean tryFinalizeRebreak() {
         if (rebreakBlock == null) return false;
 
@@ -402,13 +413,15 @@ public class SpeedMineModule extends Module {
             return false;
         }
 
-        if (sendFinishMine(rebreakBlock, true)) {
+        if (sendFinishMine(rebreakBlock)) {
             if (rebreakSetBroken.getValue() && canRebreakRebreakBlock()) {
                 mc.level.setBlockAndUpdate(
                         rebreakBlock.blockPos,
                         Blocks.AIR.defaultBlockState()
                 );
             }
+            releaseMineSwapForPlacement();
+            fireFinish(rebreakBlock.blockPos);
             return true;
         }
 
@@ -444,7 +457,7 @@ public class SpeedMineModule extends Module {
         return true;
     }
 
-    private boolean sendFinishMine(SilentMineBlock data, boolean notifyFinish) {
+    private boolean sendFinishMine(SilentMineBlock data) {
 
         if (brokeThisTick) return false;
 
@@ -453,8 +466,6 @@ public class SpeedMineModule extends Module {
         if (!data.beenAir && state.isAir()) return false;
 
         Runnable burst = () -> {
-            if (notifyFinish) fireFinish(data.blockPos);
-
             data.tryBreak();
             data.timesSendBreakPacket++;
         };
