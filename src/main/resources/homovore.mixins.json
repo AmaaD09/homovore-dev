@@ -21,6 +21,7 @@
     "entity.EntityRotationAccessor",
     "entity.FireworkRocketEntityAccessor",
     "entity.LivingEntityEffectParticlesAccessor",
+    "entity.MixinLivingEntitySwing",
     "entity.MixinAvatarRenderer",
     "entity.MixinClientPlayerEntity",
     "entity.MixinEntity",
