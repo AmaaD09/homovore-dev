@@ -55,7 +55,8 @@ public class MixinGameRenderer {
         if (mod == null || !mod.wantsHandShader()) return;
         HandShaderRender.composite(
                 HandShaderChain.get(mod.handOutline.getValue(), mod.getHandThickness(), mod.handFill.getValue(),
-                        mod.handGlow.getValue(), mod.getHandGlowRadius(), mod.getHandGlowIntensity()));
+                        mod.handGlow.getValue(), mod.getHandGlowRadius(), mod.getHandGlowIntensity(),
+                        mod.handInnerGlow.getValue(), mod.getHandInnerGlowRadius(), mod.getHandInnerGlowIntensity()));
     }
     @Inject(method = "displayItemActivation", at = @At("HEAD"), cancellable = true)
     private void homovore$noTotem(ItemStack floatingItem, CallbackInfo ci) {

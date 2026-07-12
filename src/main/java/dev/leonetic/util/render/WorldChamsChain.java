@@ -26,17 +26,20 @@ public final class WorldChamsChain {
 
     private static CachedOrthoProjectionMatrixBuffer projection;
     private static PostChain cached;
-    private static int   lastGlowRadius    = Integer.MIN_VALUE;
-    private static float lastGlowIntensity = Float.NaN;
-    private static float lastFillTint      = Float.NaN;
-    private static float lastFillAlpha     = Float.NaN;
+    private static int   lastGlowRadius         = Integer.MIN_VALUE;
+    private static float lastGlowIntensity      = Float.NaN;
+    private static float lastFillTint           = Float.NaN;
+    private static float lastFillAlpha          = Float.NaN;
+    private static int   lastInnerGlowRadius    = Integer.MIN_VALUE;
+    private static float lastInnerGlowIntensity = Float.NaN;
 
     private WorldChamsChain() {}
 
     public static PostChain get(Set<Identifier> externalTargets, int glowRadius, float glowIntensity,
-                                float fillTint, float fillAlpha) {
+                                float fillTint, float fillAlpha, int innerGlowRadius, float innerGlowIntensity) {
         if (cached != null && glowRadius == lastGlowRadius && glowIntensity == lastGlowIntensity
-                && fillTint == lastFillTint && fillAlpha == lastFillAlpha) {
+                && fillTint == lastFillTint && fillAlpha == lastFillAlpha
+                && innerGlowRadius == lastInnerGlowRadius && innerGlowIntensity == lastInnerGlowIntensity) {
             return cached;
         }
         else if (cached != null)
@@ -45,16 +48,20 @@ public final class WorldChamsChain {
             lastGlowIntensity = glowIntensity;
             lastFillTint = fillTint;
             lastFillAlpha = fillAlpha;
+            lastInnerGlowRadius = innerGlowRadius;
+            lastInnerGlowIntensity = innerGlowIntensity;
 
             Map<String, List<UniformValue>> configs = new HashMap<>();
-            List<UniformValue> dilateUniforms = List.of(integer(LINE_WIDTH), integer(glowRadius));
+            List<UniformValue> dilateUniforms = List.of(integer(LINE_WIDTH), integer(glowRadius), integer(innerGlowRadius));
             List<UniformValue> colorUniforms = List.of(integer(LINE_WIDTH), integer(glowRadius));
             List<UniformValue> chamsUniforms = List.of(
                     flt(glowIntensity),
                     flt(fillTint),
                     flt(fillAlpha),
                     integer(glowRadius),
-                    integer(LINE_WIDTH)
+                    integer(LINE_WIDTH),
+                    flt(innerGlowIntensity),
+                    integer(innerGlowRadius)
             );
 
             configs.put("DilateConfig", dilateUniforms);
@@ -64,7 +71,8 @@ public final class WorldChamsChain {
             return cached;
         }
 
-        PostChain rebuilt = build(externalTargets, glowRadius, glowIntensity, fillTint, fillAlpha);
+        PostChain rebuilt = build(externalTargets, glowRadius, glowIntensity, fillTint, fillAlpha,
+                innerGlowRadius, innerGlowIntensity);
         if (rebuilt == null) return cached;
         if (cached != null) cached.close();
         cached = rebuilt;
@@ -72,11 +80,13 @@ public final class WorldChamsChain {
         lastGlowIntensity = glowIntensity;
         lastFillTint = fillTint;
         lastFillAlpha = fillAlpha;
+        lastInnerGlowRadius = innerGlowRadius;
+        lastInnerGlowIntensity = innerGlowIntensity;
         return cached;
     }
 
     private static PostChain build(Set<Identifier> externalTargets, int glowThickness, float glowIntensity,
-                                   float fillTint, float fillAlpha) {
+                                   float fillTint, float fillAlpha, int innerGlowThickness, float innerGlowIntensity) {
         try {
             if (projection == null) {
                 projection = new CachedOrthoProjectionMatrixBuffer("homovore_chams", 0.1f, 1000.0f, false);
@@ -88,7 +98,7 @@ public final class WorldChamsChain {
                     SCREENQUAD, H_FSH,
                     List.of(new PostChainConfig.TargetInput("In", outlineTarget, false, false)),
                     CHAMS_H,
-                    Map.of("DilateConfig", List.<UniformValue>of(integer(LINE_WIDTH), integer(glowThickness))));
+                    Map.of("DilateConfig", List.<UniformValue>of(integer(LINE_WIDTH), integer(glowThickness), integer(innerGlowThickness))));
 
             PostChainConfig.Pass passC = new PostChainConfig.Pass(
                     SCREENQUAD, C_FSH,
@@ -101,7 +111,9 @@ public final class WorldChamsChain {
                     flt(fillTint),
                     flt(fillAlpha),
                     integer(glowThickness),
-                    integer(LINE_WIDTH)
+                    integer(LINE_WIDTH),
+                    flt(innerGlowIntensity),
+                    integer(innerGlowThickness)
             );
             PostChainConfig.Pass passV = new PostChainConfig.Pass(
                     SCREENQUAD, V_FSH,

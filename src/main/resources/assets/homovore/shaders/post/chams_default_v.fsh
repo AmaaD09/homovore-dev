@@ -20,6 +20,8 @@ layout(std140) uniform ChamsConfig {
     float FillAlpha;
     int GlowThickness;
     int LineWidth;
+    float InnerGlowIntensity;
+    int InnerGlowThickness;
 };
 
 in vec2 texCoord;
@@ -42,7 +44,26 @@ void main() {
     vec4 center = texture(OrigSampler, texCoord);
 
     if (center.a > 0.0) {
-        fragColor = vec4(center.rgb * FillTint, center.a * FillAlpha);
+        float alpha = center.a * FillAlpha;
+        vec3 rgb = center.rgb * FillTint;
+
+        if (InnerGlowThickness > 0) {
+            float invSpan = 1.0 / float(InnerGlowThickness + 1);
+            float acc = 0.0;
+            float wSum = 0.0;
+            for (int y = -InnerGlowThickness; y <= InnerGlowThickness; y++) {
+                float t = 1.0 - float(y) * invSpan * float(y) * invSpan;
+                float w = t * t;
+                acc  += w * texture(InSampler, texCoord + texel * vec2(0.0, float(y))).b;
+                wSum += w;
+            }
+            float edge = clamp(1.0 - acc / wSum, 0.0, 1.0);
+            float glow = clamp(pow(InnerGlowIntensity * edge, 0.72) * 1.35, 0.0, 1.0);
+            alpha = max(alpha, glow * center.a);
+            rgb = mix(rgb, center.rgb, glow);
+        }
+
+        fragColor = vec4(rgb, alpha);
         return;
     }
 

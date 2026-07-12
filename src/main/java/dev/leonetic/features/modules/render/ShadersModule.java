@@ -23,6 +23,10 @@ public class ShadersModule extends Module {
     public Setting<Float>   glowRadius    = num("GlowRadius",    3f,    0f, 16f).setPage("General");
     public Setting<Float>   glowIntensity = num("GlowIntensity", 1.55f, 0f, 3f).setPage("General");
 
+    public Setting<Boolean> innerGlow          = bool("InnerGlow", true).setPage("General");
+    public Setting<Float>   innerGlowRadius    = num("InnerGlowRadius",    4f,    0f, 16f).setPage("General");
+    public Setting<Float>   innerGlowIntensity = num("InnerGlowIntensity", 1.55f, 0f, 3f).setPage("General");
+
     public Setting<Float>   fillTint      = num("FillTint",  1.0f, 0f, 2f).setPage("General");
     public Setting<Float>   fillAlpha     = num("FillAlpha", 0.4f, 0f, 1f).setPage("General");
 
@@ -58,6 +62,10 @@ public class ShadersModule extends Module {
     public Setting<Float>   handGlowRadius    = num("HandGlowRadius",    4f, 1f, 16f).setPage("Hand");
     public Setting<Float>   handGlowIntensity = num("HandGlowIntensity", 1f, 0f, 3f).setPage("Hand");
 
+    public Setting<Boolean> handInnerGlow          = bool("HandInnerGlow", false).setPage("Hand");
+    public Setting<Float>   handInnerGlowRadius    = num("HandInnerGlowRadius",    4f, 1f, 16f).setPage("Hand");
+    public Setting<Float>   handInnerGlowIntensity = num("HandInnerGlowIntensity", 1f, 0f, 3f).setPage("Hand");
+
     public Setting<Color> handColor = color("HandColor", 255, 0, 0, 255).setPage("Hand");
 
     public ShadersModule() {
@@ -65,6 +73,10 @@ public class ShadersModule extends Module {
         glow.setVisibility(v -> mode.getValue() == Mode.Default);
         glowRadius.setVisibility(v -> mode.getValue() == Mode.Default && glow.getValue());
         glowIntensity.setVisibility(v -> mode.getValue() == Mode.Default && glow.getValue());
+
+        innerGlow.setVisibility(v -> mode.getValue() == Mode.Default);
+        innerGlowRadius.setVisibility(v -> mode.getValue() == Mode.Default && innerGlow.getValue());
+        innerGlowIntensity.setVisibility(v -> mode.getValue() == Mode.Default && innerGlow.getValue());
 
         playerRange.setVisibility(v -> players.getValue());
         friendRange.setVisibility(v -> friends.getValue());
@@ -80,6 +92,9 @@ public class ShadersModule extends Module {
         handGlow.setVisibility(v -> hand.getValue());
         handGlowRadius.setVisibility(v -> hand.getValue() && handGlow.getValue());
         handGlowIntensity.setVisibility(v -> hand.getValue() && handGlow.getValue());
+        handInnerGlow.setVisibility(v -> hand.getValue());
+        handInnerGlowRadius.setVisibility(v -> hand.getValue() && handInnerGlow.getValue());
+        handInnerGlowIntensity.setVisibility(v -> hand.getValue() && handInnerGlow.getValue());
         handColor.setVisibility(v -> hand.getValue());
     }
 
@@ -99,6 +114,14 @@ public class ShadersModule extends Module {
         return handGlowIntensity.getValue();
     }
 
+    public int getHandInnerGlowRadius() {
+        return handInnerGlow.getValue() ? Math.round(handInnerGlowRadius.getValue()) : 0;
+    }
+
+    public float getHandInnerGlowIntensity() {
+        return handInnerGlowIntensity.getValue();
+    }
+
     public int getHandRgb() {
         Color c = handColor.getValue();
         return (c.getRed() << 16) | (c.getGreen() << 8) | c.getBlue();
@@ -110,6 +133,14 @@ public class ShadersModule extends Module {
 
     public float getGlowIntensity() {
         return glowIntensity.getValue();
+    }
+
+    public int getInnerGlowRadius() {
+        return innerGlow.getValue() ? Math.round(innerGlowRadius.getValue()) : 0;
+    }
+
+    public float getInnerGlowIntensity() {
+        return innerGlowIntensity.getValue();
     }
 
     public float getFillTint() {

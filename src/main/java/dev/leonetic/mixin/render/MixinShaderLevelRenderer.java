@@ -49,7 +49,8 @@ public class MixinShaderLevelRenderer {
 
             PostChain optimised = WorldChamsChain.get(externalTargets,
                     shaders.getGlowRadius(), shaders.getGlowIntensity(),
-                    shaders.getFillTint(), shaders.getFillAlpha());
+                    shaders.getFillTint(), shaders.getFillAlpha(),
+                    shaders.getInnerGlowRadius(), shaders.getInnerGlowIntensity());
             if (optimised != null) return optimised;
         }
         return sm.getPostChain(id, externalTargets);

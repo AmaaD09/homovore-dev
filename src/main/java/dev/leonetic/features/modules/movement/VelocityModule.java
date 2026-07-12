@@ -19,6 +19,10 @@ public class VelocityModule extends Module {
         return isEnabled() && knockback.getValue() && phaseConditionMet();
     }
 
+    public boolean shouldCancelEntityPush() {
+        return isEnabled() && entityPush.getValue();
+    }
+
     public boolean phaseConditionMet() {
         if (!phaseOnly.getValue()) return true;
         Minecraft mc = Minecraft.getInstance();

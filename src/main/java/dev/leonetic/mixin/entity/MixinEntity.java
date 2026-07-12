@@ -1,5 +1,7 @@
 package dev.leonetic.mixin.entity;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import dev.leonetic.Homovore;
 import dev.leonetic.features.modules.movement.VelocityModule;
 import dev.leonetic.features.modules.render.ShadersModule;
@@ -11,7 +13,6 @@ import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(Entity.class)
@@ -51,15 +52,15 @@ public class MixinEntity {
 
     }
 
-    @Inject(method = "push(Lnet/minecraft/world/entity/Entity;)V", at = @At("HEAD"), cancellable = true)
-    private void cancelEntityPush(Entity other, CallbackInfo ci) {
-        VelocityModule velocity = Homovore.moduleManager.getModuleByClass(VelocityModule.class);
-        if (velocity == null || !velocity.isEnabled() || !velocity.entityPush.getValue() || !velocity.phaseConditionMet()) return;
+    @WrapOperation(
+        method = "push(Lnet/minecraft/world/entity/Entity;)V",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;push(DDD)V")
+    )
+    private void cancelEntityPush(Entity pushed, double x, double y, double z, Operation<Void> original) {
         LocalPlayer localPlayer = Minecraft.getInstance().player;
-        if (localPlayer == null) return;
-        Object self = this;
-        if (self == localPlayer || other == localPlayer) {
-            ci.cancel();
-        }
+        VelocityModule velocity = Homovore.moduleManager.getModuleByClass(VelocityModule.class);
+        if (localPlayer != null && pushed == localPlayer && velocity != null && velocity.shouldCancelEntityPush()) return;
+
+        original.call(pushed, x, y, z);
     }
 }
