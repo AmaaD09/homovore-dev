@@ -50,7 +50,6 @@
     "render.MixinLevelRenderer",
     "render.MixinLivingEntityRenderer",
     "render.MixinParticleEngine",
-    "render.MixinRenderTickCounter",
     "render.MixinScreenEffectRenderer",
     "render.MixinShaderLevelRenderer",
     "render.MixinSkyRenderer",

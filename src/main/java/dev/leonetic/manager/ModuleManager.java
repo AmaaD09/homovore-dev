@@ -25,9 +25,6 @@ import dev.leonetic.features.modules.movement.SpeedModule;
 import dev.leonetic.features.modules.movement.ElytraAssistModule;
 import dev.leonetic.features.modules.movement.ElytraFlyModule;
 import dev.leonetic.features.modules.movement.ElytraDashModule;
-import dev.leonetic.features.modules.movement.FakeFlyModule;
-import dev.leonetic.features.modules.movement.FreezeFallModule;
-import dev.leonetic.features.modules.movement.TimerModule;
 import dev.leonetic.features.modules.world.AutoPortalModule;
 import dev.leonetic.features.modules.world.FastPortalModule;
 import dev.leonetic.features.modules.world.BomberModule;
@@ -86,9 +83,6 @@ public class ModuleManager implements Jsonable, Util {
         register(new ElytraAssistModule());
         register(new ElytraFlyModule());
         register(new ElytraDashModule());
-        register(new FakeFlyModule());
-        register(new FreezeFallModule());
-        register(new TimerModule());
         register(new NoSlowModule());
         register(new SpeedModule());
 

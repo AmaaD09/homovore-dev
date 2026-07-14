@@ -15,9 +15,6 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 public class Homovore implements ModInitializer, ClientModInitializer {
-    public static float TIMER = 1f;
-    public static boolean TIMER_MOVEMENT_ONLY = false;
-    public static boolean FREEZE_FALL = false;
     public static final Identifier AUTOHORSE_SOUND_ID = Identifier.fromNamespaceAndPath("homovore", "autohorse");
     public static final SoundEvent AUTOHORSE_SOUND = SoundEvent.createVariableRangeEvent(AUTOHORSE_SOUND_ID);
 
