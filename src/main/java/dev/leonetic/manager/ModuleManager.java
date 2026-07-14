@@ -29,7 +29,6 @@ import dev.leonetic.features.modules.world.AutoPortalModule;
 import dev.leonetic.features.modules.world.FastPortalModule;
 import dev.leonetic.features.modules.world.BomberModule;
 import dev.leonetic.features.modules.world.SpeedMineModule;
-import dev.leonetic.features.modules.world.NukerModule;
 import dev.leonetic.features.modules.world.ScaffoldModule;
 import dev.leonetic.features.modules.render.BlockHighlightModule;
 import dev.leonetic.features.modules.render.BreadcrumbsModule;
@@ -120,7 +119,6 @@ public class ModuleManager implements Jsonable, Util {
         register(new MoFuckerModule());
         register(new BomberModule());
         register(new SpeedMineModule());
-        register(new NukerModule());
         register(new ScaffoldModule());
         register(new ReplenishModule());
         register(new InstantRekitModule());

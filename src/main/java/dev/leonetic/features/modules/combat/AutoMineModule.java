@@ -1,25 +1,20 @@
 package dev.leonetic.features.modules.combat;
 
 import dev.leonetic.Homovore;
-import dev.leonetic.event.impl.entity.player.PreTickEvent;
-import dev.leonetic.event.impl.network.PacketEvent;
 import dev.leonetic.event.impl.render.Render3DEvent;
-import dev.leonetic.event.system.Subscribe;
 import dev.leonetic.features.modules.Module;
 import dev.leonetic.features.modules.client.TargetsModule;
 import dev.leonetic.features.modules.world.SpeedMineModule;
 import dev.leonetic.features.settings.Setting;
+import dev.leonetic.util.DamageUtil;
 import dev.leonetic.util.InteractionUtil;
 import dev.leonetic.util.MathUtil;
 import dev.leonetic.util.PlaceUtil;
 import dev.leonetic.util.inventory.InventoryUtil;
 import dev.leonetic.util.inventory.Result;
-import dev.leonetic.util.inventory.ResultType;
 import dev.leonetic.util.render.RenderUtil;
-import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.network.protocol.game.ClientboundBlockDestructionPacket;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
@@ -30,349 +25,466 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.phys.shapes.Shapes;
 
 import java.awt.Color;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Queue;
 import java.util.Set;
 
 public class AutoMineModule extends Module {
-
-    private static final double INVALID_SCORE = -1000;
+    private static final double INVALID_SCORE = -1000.0;
     private static final Direction[] HORIZONTAL = {
             Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST
     };
 
-    private final Setting<Double>  range = num("Range", 6.5, 0.0, 7.0);
-    private final Setting<SortPriority> targetPriority = mode("Priority", SortPriority.Angle);
+    private final Setting<Double> range = num("Range", 6.5, 0.0, 7.0);
+    private final Setting<SortPriority> targetPriority = mode("TargetPriority", SortPriority.Angle);
     private final Setting<Boolean> ignoreNakeds = bool("IgnoreNakeds", true);
-    private final Setting<ExtendBreakMode> extendBreakMode = mode("Extend", ExtendBreakMode.Long);
-    private final Setting<Boolean> underMine = bool("UnderMine", true);
-    private final Setting<Boolean> crawlMine = bool("CrawlMine", false);
-    private final Setting<AntiSwimMode> antiSwim = mode("AntiSwim", AntiSwimMode.None);
-    private final Setting<AntiSurroundMode> antiSurroundMode = mode("AntiSurround", AntiSurroundMode.Auto);
-    private final Setting<Boolean> antiSurroundInnerSnap = bool("InnerSnap", true);
-    private final Setting<Boolean> antiSurroundOuterSnap = bool("OuterSnap", true);
-    private final Setting<Double>  antiSurroundOuterCooldown = num("OuterCooldown", 0.1, 0.0, 1.0);
-
-    private final Setting<Boolean> glassPush     = bool("GlassPush", false);
+    private final Setting<ExtendBreakMode> extendBreakMode = mode("ExtendBreakMode", ExtendBreakMode.None);
+    private final Setting<AntiSurroundMode> antiSurroundMode = mode("AntiSurroundMode", AntiSurroundMode.Auto);
+    private final Setting<Boolean> antiSurroundInnerSnap = bool("AntiSurroundInnerSnap", true);
+    private final Setting<Boolean> antiSurroundOuterSnap = bool("AntiSurroundOuterSnap", true);
+    private final Setting<Boolean> glassPush = bool("GlassPush", false);
     private final Setting<Integer> glassAttempts = num("GlassAttempts", 2, 1, 5);
-
     private final Setting<Boolean> glassRender = bool("GlassRender", true).setPage("Render");
-    private final Setting<Float> glassFadeTime = num("GlassFadeTime", 0.5f, 0.05f, 2.0f).setPage("Render")
-            .setVisibility(v -> glassRender.getValue());
-    private final Setting<Color> glassFillColor = color("GlassFillColor", 255, 255, 255, 50).setPage("Render")
-            .setVisibility(v -> glassRender.getValue());
-    private final Setting<Color> glassOutlineColor = color("GlassOutlineColor", 255, 255, 255, 255).setPage("Render")
-            .setVisibility(v -> glassRender.getValue());
-    private final Setting<Boolean> renderDebugScores = bool("DebugScores", false).setPage("Render");
+    private final Setting<Float> glassFadeTime = num("GlassFadeTime", 0.5f, 0.05f, 2.0f).setPage("Render");
+    private final Setting<Color> glassFillColor = color("GlassFillColor", 255, 255, 255, 50).setPage("Render");
+    private final Setting<Color> glassOutlineColor = color("GlassOutlineColor", 255, 255, 255, 255).setPage("Render");
+    private final Setting<Boolean> renderDebugScores = bool("RenderDebugScores", false).setPage("Render");
     private final Setting<Boolean> debugLog = bool("DebugLog", false).setPage("Extra");
 
-    private Player targetPlayer = null;
-    private CityBlock target1 = null;
-    private CityBlock target2 = null;
-    private BlockPos ignorePos = null;
-    private long lastOuterPlaceTime = 0;
+    private SpeedMineModule speedMine;
+    private Player targetPlayer;
+    private CityBlock target1;
+    private CityBlock target2;
+    private BlockPos ignorePos;
+    private long lastOuterPlaceTime;
+    private boolean crawlTargeting;
+    private int crawlPhasedCells;
+    private int crawlHitboxCells;
+    private float crawlRebreakDamage;
+    private String crawlDecision = "idle";
+    private int lastDebugTick = -1;
+    private BlockPos glassTargetPos;
+    private int glassUsedAttempts;
+    private BlockPos glassRenderPos;
+    private long glassRenderStart;
 
-    private boolean isTerrainFight = false;
-    private String debugDecision = "idle";
-
-    private BlockPos glassTargetPos = null;
-    private int glassUsedAttempts = 0;
-    private BlockPos glassRenderPos = null;
-    private long glassRenderStart = 0L;
-
-    private final Long2LongOpenHashMap enemyBreaking = new Long2LongOpenHashMap();
-    private static final long ENEMY_BREAK_TTL_MS = 1000;
-
-    private final SpeedMineModule.MineFinishListener finishListener = this::onMineFinish;
+    private final SpeedMineModule.MineFinishListener finishListener = this::onMineFinished;
 
     public AutoMineModule() {
-        super("AutoMine", "Automatically mines blocks around a target. Requires SpeedMine.", Category.COMBAT);
-        antiSurroundInnerSnap.setVisibility(v -> antiSurroundMode.getValue() == AntiSurroundMode.Auto
+        super("AutoMine", "Automatically mines blocks. Requires SpeedMine to work.", Category.COMBAT);
+        antiSurroundInnerSnap.setVisibility(value -> antiSurroundMode.getValue() == AntiSurroundMode.Auto
                 || antiSurroundMode.getValue() == AntiSurroundMode.Inner);
-        antiSurroundOuterSnap.setVisibility(v -> antiSurroundMode.getValue() == AntiSurroundMode.Auto
+        antiSurroundOuterSnap.setVisibility(value -> antiSurroundMode.getValue() == AntiSurroundMode.Auto
                 || antiSurroundMode.getValue() == AntiSurroundMode.Outer);
-        antiSurroundOuterCooldown.setVisibility(v -> antiSurroundMode.getValue() == AntiSurroundMode.Auto
-                || antiSurroundMode.getValue() == AntiSurroundMode.Outer);
-        glassAttempts.setVisibility(v -> glassPush.getValue());
+        glassAttempts.setVisibility(value -> glassPush.getValue());
+        glassFadeTime.setVisibility(value -> glassRender.getValue());
+        glassFillColor.setVisibility(value -> glassRender.getValue());
+        glassOutlineColor.setVisibility(value -> glassRender.getValue());
     }
 
     @Override
     public void onEnable() {
-        SpeedMineModule mine = Homovore.moduleManager.getModuleByClass(SpeedMineModule.class);
-        if (mine != null) mine.addFinishListener(finishListener);
-        enemyBreaking.clear();
-        lastOuterPlaceTime = 0;
+        speedMine = Homovore.moduleManager.getModuleByClass(SpeedMineModule.class);
+        if (speedMine != null) speedMine.addFinishListener(finishListener);
     }
 
     @Override
     public void onDisable() {
-        SpeedMineModule mine = Homovore.moduleManager.getModuleByClass(SpeedMineModule.class);
-        if (mine != null) mine.removeFinishListener(finishListener);
+        if (speedMine != null) speedMine.removeFinishListener(finishListener);
         targetPlayer = null;
-        target1 = target2 = null;
+        target1 = null;
+        target2 = null;
         ignorePos = null;
-        enemyBreaking.clear();
+        crawlTargeting = false;
+        crawlPhasedCells = 0;
+        crawlHitboxCells = 0;
+        crawlRebreakDamage = 0.0f;
+        crawlDecision = "disabled";
         resetGlass();
         glassRenderPos = null;
     }
 
-    @Subscribe
-    private void onPacket(PacketEvent.Receive event) {
-        if (!(event.getPacket() instanceof ClientboundBlockDestructionPacket pkt)) return;
-
-        if (mc.player != null && pkt.getId() == mc.player.getId()) return;
-        int progress = pkt.getProgress();
-        if (progress >= 0 && progress <= 9) {
-            enemyBreaking.put(pkt.getPos().asLong(), System.currentTimeMillis());
-        } else {
-            enemyBreaking.remove(pkt.getPos().asLong());
-        }
-    }
-
-    private boolean isBlockBeingBroken(BlockPos pos) {
-        long ts = enemyBreaking.get(pos.asLong());
-        return ts != 0L && System.currentTimeMillis() - ts < ENEMY_BREAK_TTL_MS;
-    }
-
-    private void onMineFinish(BlockPos pos) {
-
+    private void onMineFinished(BlockPos minedPos) {
         if (nullCheck() || targetPlayer == null) return;
+        AntiSurroundMode mode = antiSurroundMode.getValue();
 
-        AntiSurroundMode swMode = antiSurroundMode.getValue();
-        if (swMode == AntiSurroundMode.None) return;
+        AutoCrystalModule autoCrystal = Homovore.moduleManager.getModuleByClass(AutoCrystalModule.class);
+        if (autoCrystal == null || !autoCrystal.isEnabled()) return;
 
-        AutoCrystalModule crystal = Homovore.moduleManager.getModuleByClass(AutoCrystalModule.class);
-        if (crystal == null || !crystal.isEnabled()) return;
+        if (mode == AntiSurroundMode.None) return;
 
-        if (swMode == AntiSurroundMode.Auto || swMode == AntiSurroundMode.Outer) {
-            for (Direction dir : HORIZONTAL) {
-                BlockPos playerSurroundBlock = targetPlayer.blockPosition().relative(dir);
-                if (!pos.equals(playerSurroundBlock)) continue;
+        if (mode == AntiSurroundMode.Auto || mode == AntiSurroundMode.Outer) {
+            boolean delayedDestroy = minedPos.equals(speedMine.getDelayedDestroyBlockPos());
+            boolean rebreak = minedPos.equals(speedMine.getRebreakBlockPos());
+            if (delayedDestroy && tryPlaceFurthestFace(autoCrystal, minedPos)) return;
+            if (rebreak && tryPlaceOpenRebreakFace(autoCrystal, minedPos)) return;
+        }
 
-                boolean outerReady = (System.currentTimeMillis() - lastOuterPlaceTime)
-                        > (antiSurroundOuterCooldown.getValue() * 1000.0);
-                if (!outerReady) return;
-
-                AABB checkBox = AABB.ofSize(Vec3.atCenterOf(playerSurroundBlock), 2.5, 3.0, 2.5);
-                AABB blockHitbox = new AABB(playerSurroundBlock);
-
-                for (BlockPos bp : iterate(checkBox)) {
-                    if (!mc.level.getBlockState(bp).isAir()) continue;
-                    BlockState downState = mc.level.getBlockState(bp.below());
-                    if (!downState.is(Blocks.OBSIDIAN) && !downState.is(Blocks.BEDROCK)) continue;
-
-                    AABB crystalPlaceHitbox = new AABB(bp.getX(), bp.getY(), bp.getZ(),
-                            bp.getX() + 1, bp.getY() + 2, bp.getZ() + 1);
-                    if (intersectsEntity(crystalPlaceHitbox,
-                            e -> !e.isSpectator() && !(e instanceof ItemEntity))) continue;
-
-                    Vec3 crystalPos = new Vec3(bp.getX() + 0.5, bp.getY(), bp.getZ() + 0.5);
-                    AABB crystalHitbox = new AABB(crystalPos.x - 1, crystalPos.y, crystalPos.z - 1,
-                            crystalPos.x + 1, crystalPos.y + 2, crystalPos.z + 1);
-
-                    if (crystalHitbox.intersects(blockHitbox)) {
-
-                        if (crystal.preplaceCrystal(bp.immutable(), antiSurroundOuterSnap.getValue())) {
-                            lastOuterPlaceTime = System.currentTimeMillis();
-                        }
-                        return;
-                    }
+        if (mode == AntiSurroundMode.Auto || mode == AntiSurroundMode.Inner) {
+            for (Direction direction : HORIZONTAL) {
+                BlockPos surroundPos = targetPlayer.blockPosition().relative(direction);
+                if (surroundPos.equals(minedPos)) {
+                    autoCrystal.preplaceCrystal(surroundPos, antiSurroundInnerSnap.getValue());
                 }
             }
         }
-
-        if (swMode == AntiSurroundMode.Auto || swMode == AntiSurroundMode.Inner) {
-            for (Direction dir : HORIZONTAL) {
-                BlockPos playerSurroundBlock = targetPlayer.blockPosition().relative(dir);
-                if (playerSurroundBlock.equals(pos)) {
-                    crystal.preplaceCrystal(playerSurroundBlock, antiSurroundInnerSnap.getValue());
-                }
-            }
-        }
-    }
-
-    @Subscribe
-    private void onPreTick(PreTickEvent event) {
-        if (nullCheck()) return;
-        update();
-        if (debugLog.getValue()) logDebugState();
     }
 
     private void update() {
-        debugDecision = "scan";
-        targetPlayer = null;
-        target1 = target2 = null;
-        ignorePos = null;
-        SpeedMineModule mine = speedMine();
-        if (mine == null) {
-            debugDecision = "speedmine_unavailable";
-            return;
-        }
-
-        if (tryCrawlMine(mine)) {
-            debugDecision = "crawl_mine";
-            return;
-        }
-
-        BlockState selfFeetBlock = mc.level.getBlockState(mc.player.blockPosition());
-        BlockState selfHeadBlock = mc.level.getBlockState(mc.player.blockPosition().above());
-        BlockPos selfHeadPos = mc.player.blockPosition().above();
-        boolean shouldBreakSelfHeadBlock = canBreak(selfHeadPos, selfHeadBlock)
-                && (selfHeadBlock.is(Blocks.OBSIDIAN) || selfHeadBlock.is(Blocks.CRYING_OBSIDIAN));
-
-        boolean prioHead = false;
-        boolean headMineAccepted = false;
-
-        if (antiSwim.getValue() == AntiSwimMode.Always && shouldBreakSelfHeadBlock) {
-            headMineAccepted |= mine.silentBreakBlock(selfHeadPos, 10);
-            prioHead = true;
-        }
-        if (antiSwim.getValue() == AntiSwimMode.MineOrSwim && mc.player.isVisuallyCrawling()
-                && shouldBreakSelfHeadBlock) {
-            headMineAccepted |= mine.silentBreakBlock(selfHeadPos, 30);
-            prioHead = true;
-        }
-        if ((antiSwim.getValue() == AntiSwimMode.Mine || antiSwim.getValue() == AntiSwimMode.MineOrSwim)
-                && isBlockBeingBroken(mc.player.blockPosition()) && shouldBreakSelfHeadBlock) {
-            headMineAccepted |= mine.silentBreakBlock(selfHeadPos, 20);
-            prioHead = true;
-        }
+        speedMine = Homovore.moduleManager.getModuleByClass(SpeedMineModule.class);
+        if (speedMine == null || !speedMine.isEnabled()) return;
 
         targetPlayer = selectTarget();
         if (targetPlayer == null) {
-            target1 = target2 = null;
-            debugDecision = "no_target";
-            return;
-        }
-        boolean bedrock = inBedrockCase();
-        isTerrainFight = !bedrock && computeTerrainFight();
-
-        handleGlassPush(mine);
-
-        if (mine.hasDelayedDestroy() && selfHeadBlock.is(Blocks.OBSIDIAN) && selfFeetBlock.isAir()
-                && selfHeadPos.equals(mine.getRebreakBlockPos())) {
-            debugDecision = "wait_self_head_rebreak";
+            crawlTargeting = false;
+            crawlPhasedCells = 0;
+            crawlHitboxCells = 0;
+            crawlRebreakDamage = 0.0f;
+            crawlDecision = "no_target";
             return;
         }
 
-        if (prioHead) {
-            debugDecision = "anti_swim_head_request:accepted=" + headMineAccepted;
+        handleGlassPush();
+
+        if (updateCrawlTargets()) {
+            requestCrawlTargets();
             return;
+        }
+        crawlTargeting = false;
+        crawlPhasedCells = 0;
+        crawlHitboxCells = 0;
+        crawlRebreakDamage = 0.0f;
+        crawlDecision = "standing_targets";
+
+        if ((antiSurroundMode.getValue() == AntiSurroundMode.Auto
+                || antiSurroundMode.getValue() == AntiSurroundMode.Outer)
+                && speedMine.hasDelayedDestroy()) {
+            AutoCrystalModule autoCrystal = Homovore.moduleManager.getModuleByClass(AutoCrystalModule.class);
+            if (autoCrystal != null && autoCrystal.isEnabled()) {
+                tryPlaceFurthestFace(autoCrystal, speedMine.getDelayedDestroyBlockPos());
+            }
         }
 
         findTargetBlocks();
+        requestSelectedTargets();
+    }
 
-        boolean isTargetingFeetBlock = (target1 != null && target1.isFeetBlock)
-                || (target2 != null && target2.isFeetBlock);
+    private void requestSelectedTargets() {
+        boolean targetingFeet = target1 != null && target1.isFeetBlock
+                || target2 != null && target2.isFeetBlock;
+        if (!targetingFeet && (target1 != null && target1.blockPos.equals(speedMine.getRebreakBlockPos())
+                || target2 != null && target2.blockPos.equals(speedMine.getRebreakBlockPos()))) return;
 
-        if (!isTargetingFeetBlock && mine.canRebreakRebreakBlock()
-                && ((target1 != null && target1.blockPos.equals(mine.getRebreakBlockPos()))
-                || (target2 != null && target2.blockPos.equals(mine.getRebreakBlockPos())))) {
-            debugDecision = "keep_active_rebreak";
-            return;
+        boolean bothInProgress = speedMine.hasDelayedDestroy() && speedMine.hasRebreakBlock()
+                && !speedMine.canRebreakRebreakBlock();
+        if (bothInProgress) return;
+
+        Queue<BlockPos> targets = new LinkedList<>();
+        if (target1 != null) targets.add(target1.blockPos);
+        if (target2 != null) targets.add(target2.blockPos);
+        if (!targets.isEmpty() && speedMine.hasDelayedDestroy()) {
+            speedMine.silentBreakBlock(targets.remove(), 10);
         }
-
-        boolean hasBothInProgress = mine.hasDelayedDestroy() && mine.hasRebreakBlock()
-                && !mine.canRebreakRebreakBlock();
-        if (hasBothInProgress && !mine.hasFailingBlock()) {
-            debugDecision = "two_mines_in_progress";
-            return;
-        }
-
-        Queue<BlockPos> targetBlocks = new LinkedList<>();
-        if (target1 != null) targetBlocks.add(target1.blockPos);
-        if (target2 != null) targetBlocks.add(target2.blockPos);
-        int selectedTargets = targetBlocks.size();
-
-        while (!targetBlocks.isEmpty() && mine.alreadyBreaking(targetBlocks.peek())) {
-            targetBlocks.remove();
-        }
-        if (!targetBlocks.isEmpty()) {
-            BlockPos requested = targetBlocks.remove();
-            boolean accepted = mine.silentBreakBlock(requested, 10);
-            debugDecision = "mine_request:" + requested + ":accepted=" + accepted;
-        } else {
-            debugDecision = selectedTargets == 0 ? "no_scored_target" : "selected_targets_already_active";
+        if (!targets.isEmpty() && (!speedMine.hasRebreakBlock() || speedMine.canRebreakRebreakBlock())) {
+            speedMine.silentBreakBlock(targets.remove(), 10);
         }
     }
 
-    private boolean tryCrawlMine(SpeedMineModule mine) {
-        if (!crawlMine.getValue()) return false;
-        if (mc.player.isCrouching()) return false;
+    private boolean updateCrawlTargets() {
+        if (!targetPlayer.isVisuallyCrawling()) return false;
 
-        BlockPos feetPos = mc.player.blockPosition();
-        BlockPos headPos = feetPos.above();
-        BlockState feetBlock = mc.level.getBlockState(feetPos);
-        BlockState headBlock = mc.level.getBlockState(headPos);
+        List<BlockPos> phasedCells = phasedCrawlCells();
+        crawlTargeting = true;
+        Set<BlockPos> hitboxCells = crawlHitboxCells();
+        crawlPhasedCells = phasedCells.size();
+        crawlHitboxCells = hitboxCells.size();
+        crawlRebreakDamage = 0.0f;
+        List<BlockPos> validCells = new ArrayList<>();
+        for (BlockPos pos : phasedCells) {
+            BlockState state = mc.level.getBlockState(pos);
+            if (canBreak(pos, state) && speedMine.inBreakRange(pos)) validCells.add(pos);
+        }
 
-        if (!isBlocked(feetPos, feetBlock) || !isBlocked(headPos, headBlock)) return false;
-        if (!InteractionUtil.canBreak(feetPos, feetBlock)) return false;
-
-        return mine.silentBreakBlock(feetPos, 200);
+        CrawlPair pair = selectCrawlPair(phasedCells, validCells, hitboxCells);
+        target1 = pair == null ? null : cityBlock(pair.first, true);
+        target2 = pair == null || pair.second == null ? null : cityBlock(pair.second, false);
+        ignorePos = target1 == null ? null : target1.blockPos;
+        crawlDecision = pair == null ? "no_valid_target"
+                : phasedCells.isEmpty() ? "unphased_damage_pair"
+                : pair.second == null ? "phased_delayed_only" : "phased_yaw_damage_pair";
+        return true;
     }
 
-    private boolean isBlocked(BlockPos pos, BlockState state) {
-        return !state.canBeReplaced() && state.getShape(mc.level, pos) != Shapes.empty();
+    private void requestCrawlTargets() {
+        if (target1 == null) return;
+
+        BlockPos delayedTarget = target1.blockPos;
+        BlockPos rebreakTarget = target2 == null ? null : target2.blockPos;
+        BlockPos delayedPos = speedMine.getDelayedDestroyBlockPos();
+        BlockPos rebreakPos = speedMine.getRebreakBlockPos();
+        if (delayedPos != null && !delayedPos.equals(delayedTarget)) return;
+        if (rebreakPos != null && (rebreakTarget == null || !rebreakPos.equals(rebreakTarget))) {
+            speedMine.clearRebreak();
+        }
+
+        speedMine.silentBreakBlock(delayedTarget, 100);
+        if (rebreakTarget != null && delayedTarget.equals(speedMine.getDelayedDestroyBlockPos())) {
+            speedMine.silentBreakBlock(rebreakTarget, 100);
+        }
     }
 
-    private Player selectTarget() {
-        TargetsModule targets = Homovore.moduleManager.getModuleByClass(TargetsModule.class);
-        double rangeV = range.getValue();
-        Player best = null;
-        double bestMetric = Double.MAX_VALUE;
+    private List<BlockPos> phasedCrawlCells() {
+        AABB playerBox = targetPlayer.getBoundingBox().deflate(1.0E-4);
+        List<BlockPos> cells = new ArrayList<>();
+        for (BlockPos raw : iterate(playerBox)) {
+            BlockPos pos = raw.immutable();
+            BlockState state = mc.level.getBlockState(pos);
+            if (state.getCollisionShape(mc.level, pos).toAabbs().stream()
+                    .map(shape -> shape.move(pos.getX(), pos.getY(), pos.getZ()))
+                    .anyMatch(shape -> shape.intersects(playerBox))) {
+                cells.add(pos);
+            }
+        }
+        return cells;
+    }
 
-        AABB area = mc.player.getBoundingBox().inflate(rangeV);
-        for (Entity e : mc.level.getEntities(mc.player, area)) {
-            if (!(e instanceof Player player)) continue;
-            if (player == mc.player) continue;
-            if (!player.isAlive() || player.isDeadOrDying() || player.isSpectator()) continue;
+    private CrawlPair selectCrawlPair(List<BlockPos> phasedCells, List<BlockPos> validCells,
+                                      Set<BlockPos> hitboxCells) {
+        double yaw = Math.toRadians(targetPlayer.getYRot());
+        double lookX = -Math.sin(yaw);
+        double lookZ = Math.cos(yaw);
+        if (phasedCells.isEmpty()) return selectUnphasedPair(hitboxCells, lookX, lookZ);
 
-            if (targets != null && !targets.isValidTarget(player)) continue;
-            if (player.position().distanceTo(mc.player.getEyePosition()) > rangeV) continue;
-            if (ignoreNakeds.getValue() && isNaked(player)) continue;
+        Set<BlockPos> validSet = new HashSet<>(validCells);
+        CrawlPair best = null;
+        double bestYaw = -Double.MAX_VALUE;
+        float bestDamage = -1.0f;
+        for (BlockPos delayedCandidate : validCells) {
+            double yawScore = facingScore(delayedCandidate, lookX, lookZ);
+            BlockPos rebreakCandidate = null;
+            float rebreakDamage = -1.0f;
 
-            double metric = switch (targetPriority.getValue()) {
-                case Distance -> mc.player.distanceToSqr(player);
-                case Angle    -> angleTo(player);
-            };
-            if (metric < bestMetric) { bestMetric = metric; best = player; }
+            for (Direction direction : HORIZONTAL) {
+                BlockPos adjacent = delayedCandidate.relative(direction);
+                if (phasedCells.size() > 1) {
+                    if (!validSet.contains(adjacent) || !validCrystalMine(adjacent)) continue;
+                } else {
+                    if (hitboxCells.contains(adjacent) || !validCrystalMine(adjacent)) continue;
+                }
+
+                float damage = crawlCrystalDamage(adjacent);
+                if (damage <= 1.0f || damage <= rebreakDamage) continue;
+                rebreakDamage = damage;
+                rebreakCandidate = adjacent;
+            }
+
+            float candidateDamage = Math.max(rebreakDamage, 0.0f);
+            if (yawScore > bestYaw + 1.0E-6
+                    || Math.abs(yawScore - bestYaw) <= 1.0E-6 && candidateDamage > bestDamage) {
+                bestYaw = yawScore;
+                bestDamage = candidateDamage;
+                best = new CrawlPair(delayedCandidate, rebreakCandidate);
+            }
+        }
+
+        crawlRebreakDamage = Math.max(bestDamage, 0.0f);
+        return best;
+    }
+
+    private Set<BlockPos> crawlHitboxCells() {
+        AABB box = targetPlayer.getBoundingBox().deflate(1.0E-4);
+        Set<BlockPos> cells = new HashSet<>();
+        for (BlockPos pos : iterate(box)) cells.add(pos.immutable());
+        return cells;
+    }
+
+    private CrawlPair selectUnphasedPair(Set<BlockPos> hitboxCells, double lookX, double lookZ) {
+        if (hitboxCells.isEmpty()) return null;
+
+        int minX = hitboxCells.stream().mapToInt(BlockPos::getX).min().orElse(0) - 2;
+        int maxX = hitboxCells.stream().mapToInt(BlockPos::getX).max().orElse(0) + 2;
+        int minZ = hitboxCells.stream().mapToInt(BlockPos::getZ).min().orElse(0) - 2;
+        int maxZ = hitboxCells.stream().mapToInt(BlockPos::getZ).max().orElse(0) + 2;
+        int y = Mth.floor(targetPlayer.getBoundingBox().minY);
+
+        List<BlockPos> candidates = new ArrayList<>();
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                BlockPos candidate = new BlockPos(x, y, z);
+                if (!hitboxCells.contains(candidate) && validCrystalMine(candidate)) candidates.add(candidate);
+            }
+        }
+
+        CrawlPair best = null;
+        float bestCombinedDamage = -1.0f;
+        double bestYaw = -Double.MAX_VALUE;
+        for (int firstIndex = 0; firstIndex < candidates.size(); firstIndex++) {
+            BlockPos first = candidates.get(firstIndex);
+            for (int secondIndex = firstIndex + 1; secondIndex < candidates.size(); secondIndex++) {
+                BlockPos second = candidates.get(secondIndex);
+                if (!cardinallyAdjacent(first, second)) continue;
+
+                float firstDamage = crawlCrystalDamage(first);
+                float secondDamage = crawlCrystalDamage(second);
+                if (firstDamage <= 1.0f || secondDamage <= 1.0f) continue;
+
+                BlockPos delayed = facingScore(first, lookX, lookZ) >= facingScore(second, lookX, lookZ)
+                        ? first : second;
+                BlockPos rebreak = delayed.equals(first) ? second : first;
+                float combinedDamage = firstDamage + secondDamage;
+                double yawScore = facingScore(delayed, lookX, lookZ);
+                if (combinedDamage > bestCombinedDamage + 1.0E-4f
+                        || Math.abs(combinedDamage - bestCombinedDamage) <= 1.0E-4f && yawScore > bestYaw) {
+                    bestCombinedDamage = combinedDamage;
+                    bestYaw = yawScore;
+                    crawlRebreakDamage = rebreak.equals(first) ? firstDamage : secondDamage;
+                    best = new CrawlPair(delayed, rebreak);
+                }
+            }
         }
         return best;
     }
 
-    private double angleTo(Player player) {
-        float[] need = MathUtil.calcAngle(mc.player.getEyePosition(), player.getEyePosition());
-        double dYaw = MathUtil.wrapDegrees(need[0] - mc.player.getYRot());
-        double dPitch = need[1] - mc.player.getXRot();
-        return Math.sqrt(dYaw * dYaw + dPitch * dPitch);
+    private boolean validCrystalMine(BlockPos pos) {
+        BlockState state = mc.level.getBlockState(pos);
+        BlockState base = mc.level.getBlockState(pos.below());
+        return canBreak(pos, state) && speedMine.inBreakRange(pos)
+                && (base.is(Blocks.OBSIDIAN) || base.is(Blocks.BEDROCK))
+                && crystalIntersectsTarget(pos);
     }
 
-    private boolean isNaked(Player p) {
-        return p.getItemBySlot(EquipmentSlot.HEAD).isEmpty()
-                && p.getItemBySlot(EquipmentSlot.CHEST).isEmpty()
-                && p.getItemBySlot(EquipmentSlot.LEGS).isEmpty()
-                && p.getItemBySlot(EquipmentSlot.FEET).isEmpty();
+    private static boolean cardinallyAdjacent(BlockPos first, BlockPos second) {
+        return first.getY() == second.getY()
+                && Math.abs(first.getX() - second.getX()) + Math.abs(first.getZ() - second.getZ()) == 1;
     }
 
-    private void handleGlassPush(SpeedMineModule mine) {
-        if (!glassPush.getValue()) { resetGlass(); return; }
+    private double facingScore(BlockPos pos, double lookX, double lookZ) {
+        Vec3 offset = Vec3.atCenterOf(pos).subtract(targetPlayer.position());
+        return offset.x * lookX + offset.z * lookZ;
+    }
 
-        AutoCrystalModule crystal = Homovore.moduleManager.getModuleByClass(AutoCrystalModule.class);
-        if (crystal == null || !crystal.isEnabled()) { resetGlass(); return; }
+    private boolean crystalIntersectsTarget(BlockPos airPos) {
+        double centerX = airPos.getX() + 0.5;
+        double centerZ = airPos.getZ() + 0.5;
+        AABB crystalBox = new AABB(centerX - 1.0, airPos.getY(), centerZ - 1.0,
+                centerX + 1.0, airPos.getY() + 2.0, centerZ + 1.0);
+        return crystalBox.intersects(targetPlayer.getBoundingBox());
+    }
 
-        if (!mine.canRebreakRebreakBlock()) { resetGlass(); return; }
-        BlockPos pos = mine.getRebreakBlockPos();
-        if (pos == null) { resetGlass(); return; }
+    private float crawlCrystalDamage(BlockPos airPos) {
+        Vec3 explosionPos = new Vec3(airPos.getX() + 0.5, airPos.getY(), airPos.getZ() + 0.5);
+        return DamageUtil.crystalDamage(targetPlayer, explosionPos, airPos);
+    }
 
-        if (!isGoodRebreak(pos, inBedrockCase()) || !crystal.isDesirablePlacement(pos)) {
+    private Player selectTarget() {
+        TargetsModule targets = Homovore.moduleManager.getModuleByClass(TargetsModule.class);
+        Player best = null;
+        double bestMetric = Double.MAX_VALUE;
+        AABB area = mc.player.getBoundingBox().inflate(range.getValue());
+        for (Entity entity : mc.level.getEntities(mc.player, area)) {
+            if (!(entity instanceof Player player)) continue;
+            if (!player.isAlive() || player.isDeadOrDying() || player.isCreative() || player.isSpectator()) continue;
+            if (targets != null && !targets.isValidTarget(player)) continue;
+            if (player.position().distanceTo(mc.player.getEyePosition()) > range.getValue()) continue;
+            if (ignoreNakeds.getValue() && isNaked(player)) continue;
+
+            double metric = targetPriority.getValue() == SortPriority.Distance
+                    ? mc.player.distanceToSqr(player) : angleTo(player);
+            if (metric < bestMetric) {
+                bestMetric = metric;
+                best = player;
+            }
+        }
+        return best;
+    }
+
+    private static CityBlock cityBlock(BlockPos pos, boolean feet) {
+        CityBlock block = new CityBlock();
+        block.blockPos = pos;
+        block.isFeetBlock = feet;
+        return block;
+    }
+
+    private boolean tryPlaceFurthestFace(AutoCrystalModule autoCrystal, BlockPos minedPos) {
+        if (minedPos == null || System.currentTimeMillis() - lastOuterPlaceTime < 75L) return false;
+
+        BlockPos best = null;
+        double bestDistance = -1.0;
+        for (Direction direction : HORIZONTAL) {
+            BlockPos candidate = minedPos.relative(direction);
+            if (!canPlaceCrystalAt(candidate)) continue;
+            double distance = targetPlayer.distanceToSqr(Vec3.atCenterOf(candidate));
+            if (distance > bestDistance) {
+                bestDistance = distance;
+                best = candidate;
+            }
+        }
+        return placeOuter(autoCrystal, best);
+    }
+
+    private boolean tryPlaceOpenRebreakFace(AutoCrystalModule autoCrystal, BlockPos minedPos) {
+        if (minedPos == null || System.currentTimeMillis() - lastOuterPlaceTime < 75L) return false;
+
+        Set<BlockPos> targetFeet = new HashSet<>();
+        for (BlockPos pos : iterate(targetFeetBox())) targetFeet.add(pos.immutable());
+
+        BlockPos openFace = null;
+        double bestDistance = -1.0;
+        for (Direction direction : HORIZONTAL) {
+            BlockPos face = minedPos.relative(direction);
+            if (targetFeet.contains(face)) continue;
+            if (mc.level.getBlockState(face).is(Blocks.OBSIDIAN)) return false;
+            if (!canPlaceCrystalAt(face)) continue;
+
+            double distance = targetPlayer.distanceToSqr(Vec3.atCenterOf(face));
+            if (distance > bestDistance) {
+                bestDistance = distance;
+                openFace = face;
+            }
+        }
+        return placeOuter(autoCrystal, openFace);
+    }
+
+    private boolean canPlaceCrystalAt(BlockPos pos) {
+        BlockState state = mc.level.getBlockState(pos);
+        BlockState base = mc.level.getBlockState(pos.below());
+        return (state.isAir() || state.canBeReplaced())
+                && (base.is(Blocks.OBSIDIAN) || base.is(Blocks.BEDROCK));
+    }
+
+    private boolean placeOuter(AutoCrystalModule autoCrystal, BlockPos pos) {
+        if (pos == null || !autoCrystal.preplaceCrystal(pos, antiSurroundOuterSnap.getValue())) return false;
+        lastOuterPlaceTime = System.currentTimeMillis();
+        return true;
+    }
+
+    private void handleGlassPush() {
+        if (!glassPush.getValue()) {
+            resetGlass();
+            return;
+        }
+
+        AutoCrystalModule autoCrystal = Homovore.moduleManager.getModuleByClass(AutoCrystalModule.class);
+        if (autoCrystal == null || !autoCrystal.isEnabled() || !speedMine.canRebreakRebreakBlock()) {
+            resetGlass();
+            return;
+        }
+
+        BlockPos pos = speedMine.getRebreakBlockPos();
+        if (pos == null) {
+            resetGlass();
+            return;
+        }
+
+        AABB feetBox = targetFeetBox();
+        boolean bedrock = BlockPos.betweenClosedStream(feetBox)
+                .anyMatch(blockPos -> mc.level.getBlockState(blockPos).is(Blocks.BEDROCK));
+        if (!isGoodRebreak(pos, bedrock, feetBox) || !autoCrystal.isDesirablePlacement(pos)) {
             resetGlass();
             return;
         }
@@ -381,19 +493,16 @@ public class AutoMineModule extends Module {
             glassTargetPos = pos.immutable();
             glassUsedAttempts = 0;
         }
-
         if (!itemInCrystalSpot(pos)) {
             glassUsedAttempts = 0;
             return;
         }
-
         if (glassUsedAttempts >= glassAttempts.getValue()) return;
-
         if (!mc.level.getBlockState(pos).isAir()) return;
 
         if (placeGlass(pos)) {
             glassUsedAttempts++;
-            mine.holdRebreak(pos, 5);
+            speedMine.holdRebreak(pos, 5);
             glassRenderPos = pos.immutable();
             glassRenderStart = System.currentTimeMillis();
         }
@@ -401,16 +510,15 @@ public class AutoMineModule extends Module {
 
     private boolean itemInCrystalSpot(BlockPos airPos) {
         AABB box = new AABB(airPos).expandTowards(0, 1, 0);
-        for (Entity e : mc.level.getEntities((Entity) null, box)) {
-            if (e instanceof ItemEntity) return true;
+        for (Entity entity : mc.level.getEntities((Entity) null, box)) {
+            if (entity instanceof ItemEntity) return true;
         }
         return false;
     }
 
     private boolean placeGlass(BlockPos pos) {
         Result glass = InventoryUtil.find(Items.GLASS, InventoryUtil.PLACE_SCOPE);
-        if (!glass.found()) return false;
-        if (!PlaceUtil.canPlace(pos)) return false;
+        if (!glass.found() || !PlaceUtil.canPlace(pos)) return false;
         if (!Homovore.placementManager.enqueue(pos, glass.slot())) return false;
         Homovore.placementManager.flushQueue();
         return true;
@@ -421,476 +529,358 @@ public class AutoMineModule extends Module {
         glassUsedAttempts = 0;
     }
 
-    private void findTargetBlocks() {
-        target1 = findCityBlock(null);
-        ignorePos = target1 != null ? target1.blockPos : null;
-        target2 = findCityBlock(target1 != null ? target1.blockPos : null);
-    }
-
-    private CityBlock findCityBlock(BlockPos exclude) {
-        if (targetPlayer == null) return null;
-
-        boolean inBedrock = inBedrockCase();
-        isTerrainFight = !inBedrock && computeTerrainFight();
-        Set<CheckPos> checkPositions = new HashSet<>();
-        if (inBedrock) addBedrockCaseCheckPositions(checkPositions);
-        else addNormalCaseCheckPositions(checkPositions);
-
-        CityBlock bestBlock = new CityBlock();
-        boolean set = false;
-        for (CheckPos pos : checkPositions) {
-            if (pos.blockPos.equals(exclude)) continue;
-            double score = evalCheckPos(pos, inBedrock);
-            if (score == INVALID_SCORE) continue;
-            if (score > bestBlock.score) {
-                bestBlock.score = score;
-                bestBlock.blockPos = pos.blockPos;
-                bestBlock.isFeetBlock = isBlockInFeet(pos.blockPos);
-                bestBlock.type = pos.type;
-                set = true;
-            }
-        }
-        return set ? bestBlock : null;
-    }
-
-    private double evalCheckPos(CheckPos pos, boolean inBedrock) {
-        SpeedMineModule mine = speedMine();
-        if (mine == null) return INVALID_SCORE;
-
-        BlockPos blockPos = pos.blockPos;
-        BlockState block = mc.level.getBlockState(blockPos);
-        boolean goodRebreak = isGoodRebreak(blockPos, inBedrock);
-
-        if (block.isAir() && !goodRebreak) return INVALID_SCORE;
-        if (!canBreak(blockPos, block) && !goodRebreak) return INVALID_SCORE;
-        if (!mine.inBreakRange(blockPos)) return INVALID_SCORE;
-
-        double score = inBedrock ? scoreBedrock(pos) : scoreNormal(pos);
-        if (score == INVALID_SCORE) return INVALID_SCORE;
-        if (goodRebreak) score += 40;
-        return score;
-    }
-
-    private boolean isGoodRebreak(BlockPos blockPos, boolean inBedrock) {
-        SpeedMineModule mine = speedMine();
-        if (mine == null || !mine.canRebreakRebreakBlock()) return false;
-        if (!blockPos.equals(mine.getRebreakBlockPos())) return false;
-
-        if (inBedrock) {
-            boolean isSelfTrapBlock = false;
-            for (Direction dir : HORIZONTAL) {
-                if (targetPlayer.blockPosition().above().relative(dir).equals(blockPos)) {
-                    isSelfTrapBlock = true;
-                    break;
-                }
-            }
-            boolean canFacePlace = mc.level.getBlockState(targetPlayer.blockPosition().above()).isAir();
-            return BlockPos.betweenClosedStream(targetFeetBox()).count() == 1
-                    && (blockPos.equals(targetPlayer.blockPosition().above(2))
-                            || (isSelfTrapBlock && canFacePlace));
-        } else {
-            if (blockPos.equals(targetPlayer.blockPosition()) || isBlockInFeet(blockPos)) return false;
-            for (Direction dir : HORIZONTAL) {
-                if (targetPlayer.blockPosition().relative(dir).equals(blockPos)
-                        && isCrystalBlock(targetPlayer.blockPosition().relative(dir).below())) {
-                    return true;
-                }
-            }
-            return false;
-        }
-    }
-
-    private void addNormalCaseCheckPositions(Set<CheckPos> checkPos) {
-        AABB feetBox = targetFeetBox();
-        for (BlockPos raw : iterate(feetBox)) {
-            checkPos.add(new CheckPos(raw.immutable(), CheckPosType.Feet));
-        }
-        for (BlockPos raw : iterate(feetBox)) {
-            BlockPos feet = raw.immutable();
-            for (Direction dir : HORIZONTAL) {
-                BlockPos surround = feet.relative(dir);
-
-                if (isBlockInFeet(surround)) continue;
-                checkPos.add(new CheckPos(surround, CheckPosType.Surround));
-
-                if (underMine.getValue()) {
-                    BlockPos base = surround.below();
-                    if (canBreak(base, mc.level.getBlockState(base))) {
-                        checkPos.add(new CheckPos(base, CheckPosType.TerrainBase));
-                    }
-                }
-
-                switch (extendBreakMode.getValue()) {
-                    case None -> { }
-                    case Long -> checkPos.add(new CheckPos(surround.relative(dir), CheckPosType.Extend));
-                    case Corner -> {
-                        Direction perpDir = getCornerPerpDir(dir);
-                        if (perpDir != null) {
-                            checkPos.add(new CheckPos(surround.relative(perpDir), CheckPosType.Extend));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private boolean computeTerrainFight() {
-        AABB feetBox = targetFeetBox();
-        for (BlockPos feet : iterate(feetBox)) {
-            for (Direction dir : HORIZONTAL) {
-                BlockPos neighbor = feet.relative(dir);
-                if (isBlockInFeet(neighbor)) continue;
-                if (isCrystalBlock(neighbor.below())) return false;
-            }
-        }
-        return true;
-    }
-
-    private void addBedrockCaseCheckPositions(Set<CheckPos> checkPos) {
-        AABB feetBox = targetFeetBox();
-
-        boolean canFallDown = BlockPos.betweenClosedStream(feetBox)
-                .allMatch(bp -> !mc.level.getBlockState(bp.below()).is(Blocks.BEDROCK));
-        boolean canBeHitUp = BlockPos.betweenClosedStream(feetBox)
-                .allMatch(bp -> !mc.level.getBlockState(bp.above(2)).is(Blocks.BEDROCK));
-
-        for (BlockPos pos : iterate(feetBox)) {
-            BlockPos p = pos.immutable();
-            if (canFallDown) checkPos.add(new CheckPos(p.below(), CheckPosType.Below));
-            if (canBeHitUp)  checkPos.add(new CheckPos(p.above(2), CheckPosType.Head));
-
-            checkPos.add(new CheckPos(p.above(), CheckPosType.FacePlace));
-            for (Direction dir : HORIZONTAL) {
-                checkPos.add(new CheckPos(p.above().relative(dir), CheckPosType.FacePlace));
-            }
-
-            checkPos.add(new CheckPos(p, CheckPosType.Surround));
-            for (Direction dir : HORIZONTAL) {
-                checkPos.add(new CheckPos(p.relative(dir), CheckPosType.Surround));
-            }
-        }
-    }
-
-    private double scoreNormal(CheckPos pos) {
-        BlockPos blockPos = pos.blockPos;
-        double score = 0;
-        BlockState block = mc.level.getBlockState(blockPos);
-
-        if (pos.type == CheckPosType.Feet) {
-            BlockState headBlock = mc.level.getBlockState(blockPos.above());
-            if (headBlock.is(Blocks.OBSIDIAN)) {
-                score += 100;
-            } else {
-                if (block.is(Blocks.COBWEB)) return INVALID_SCORE;
-                score += 50;
-            }
-        } else {
-            BlockState selfHeadState = mc.level.getBlockState(mc.player.blockPosition().above());
-
-            if (blockPos.equals(mc.player.blockPosition())
-                    && (selfHeadState.is(Blocks.OBSIDIAN) || selfHeadState.is(Blocks.BEDROCK))) {
-                return INVALID_SCORE;
-            }
-
-            if (pos.type == CheckPosType.Surround) {
-
-                BlockState down = mc.level.getBlockState(blockPos.below());
-                if (down.isAir()) {
-                    score += 35;
-                } else if (!down.is(Blocks.OBSIDIAN) && !down.is(Blocks.BEDROCK)) {
-                    score += 10;
-                } else {
-                    score += 55;
-
-                    boolean isPosAntiSurround = false;
-                    for (Direction dir : HORIZONTAL) {
-                        BlockPos antiSurroundBlockPos = blockPos.relative(dir);
-                        if (targetPlayer.distanceToSqr(Vec3.atCenterOf(blockPos)) < 4.0
-                                && getBlockStateIgnore(antiSurroundBlockPos).isAir()
-                                && isCrystalBlock(antiSurroundBlockPos.below())) {
-                            isPosAntiSurround = true;
-                            break;
-                        }
-                    }
-                    if (isPosAntiSurround) score += 25;
-                }
-            }
-
-            if (pos.type == CheckPosType.Extend) score += 20;
-
-            if (pos.type == CheckPosType.TerrainBase) {
-                score += isTerrainFight ? 30 : 1;
-            }
-        }
-
-        double d = targetPlayer.position().distanceTo(Vec3.atCenterOf(blockPos));
-        score += 10 / d;
-
-        Vec3 velocity = targetPlayer.getDeltaMovement();
-        if (velocity.horizontalDistanceSqr() > 0.001) {
-            Vec3 moveDir = new Vec3(velocity.x, 0, velocity.z).normalize();
-            Vec3 toBlock = Vec3.atCenterOf(blockPos).subtract(targetPlayer.position()).normalize();
-            double dot = moveDir.dot(toBlock);
-            if (dot > 0) score += dot * 5;
-        }
-
-        return score;
-    }
-
-    private double scoreBedrock(CheckPos pos) {
-        BlockPos blockPos = pos.blockPos;
-        double score = 0;
-
-        if (blockPos.getY() == targetPlayer.getBlockY() + 2
-                || blockPos.getY() == targetPlayer.getBlockY() - 1) {
-            score += 10;
-        }
-
-        if (BlockPos.betweenClosedStream(targetFeetBox()).count() == 1) {
-            boolean canMineFaceBlock = !mc.level.getBlockState(targetPlayer.blockPosition().above()).is(Blocks.BEDROCK);
-            if (canMineFaceBlock) {
-                if (blockPos.equals(targetPlayer.blockPosition().above())) {
-                    score += 20;
-                } else {
-                    boolean isSelfTrapBlock = false;
-                    for (Direction dir : HORIZONTAL) {
-                        if (targetPlayer.blockPosition().above().relative(dir).equals(blockPos)) {
-                            isSelfTrapBlock = true;
-                            break;
-                        }
-                    }
-                    if (isSelfTrapBlock) score += 7.5;
-                }
-            }
-        }
-
-        double d = targetPlayer.position().distanceTo(Vec3.atCenterOf(blockPos));
-        score += 10 / d;
-        return score;
-    }
-
-    @Override
-    public void onRender3D(Render3DEvent event) {
-        if (nullCheck() || !glassRender.getValue() || glassRenderPos == null) return;
-
+    private void renderGlass(Render3DEvent event) {
+        if (!glassRender.getValue() || glassRenderPos == null) return;
         long age = System.currentTimeMillis() - glassRenderStart;
         double fadeMs = glassFadeTime.getValue() * 1000.0;
         if (age > fadeMs) {
             glassRenderPos = null;
             return;
         }
-        double t = age / fadeMs;
-        Color fc = glassFillColor.getValue();
-        Color oc = glassOutlineColor.getValue();
+
+        double progress = age / fadeMs;
+        Color fill = glassFillColor.getValue();
+        Color outline = glassOutlineColor.getValue();
         RenderUtil.drawBoxFilled(event.getMatrix(), glassRenderPos,
-                new Color(fc.getRed(), fc.getGreen(), fc.getBlue(), (int) (fc.getAlpha() * (1 - t))));
+                fadeColor(fill, progress));
         RenderUtil.drawBox(event.getMatrix(), glassRenderPos,
-                new Color(oc.getRed(), oc.getGreen(), oc.getBlue(), (int) (oc.getAlpha() * (1 - t))), 1.5f);
+                fadeColor(outline, progress), 1.5f);
     }
 
-    @Subscribe
-    private void onRenderDebug(Render3DEvent event) {
-        if (nullCheck() || !renderDebugScores.getValue() || targetPlayer == null) return;
-        if (speedMine() == null) return;
+    private static Color fadeColor(Color color, double progress) {
+        return new Color(color.getRed(), color.getGreen(), color.getBlue(),
+                (int) (color.getAlpha() * (1.0 - progress)));
+    }
 
-        boolean inBedrock = inBedrockCase();
-        isTerrainFight = !inBedrock && computeTerrainFight();
-        Set<CheckPos> checkPos = new HashSet<>();
-        if (inBedrock) addBedrockCaseCheckPositions(checkPos);
-        else addNormalCaseCheckPositions(checkPos);
+    private double angleTo(Player player) {
+        float[] angle = MathUtil.calcAngle(mc.player.getEyePosition(), player.getEyePosition());
+        double yaw = MathUtil.wrapDegrees(angle[0] - mc.player.getYRot());
+        double pitch = angle[1] - mc.player.getXRot();
+        return Math.sqrt(yaw * yaw + pitch * pitch);
+    }
 
-        double bestScore = 0;
-        for (CheckPos cp : checkPos) {
-            double s = evalCheckPos(cp, inBedrock);
-            if (s != INVALID_SCORE && s > bestScore) bestScore = s;
+    private boolean isNaked(Player player) {
+        return player.getItemBySlot(EquipmentSlot.HEAD).isEmpty()
+                && player.getItemBySlot(EquipmentSlot.CHEST).isEmpty()
+                && player.getItemBySlot(EquipmentSlot.LEGS).isEmpty()
+                && player.getItemBySlot(EquipmentSlot.FEET).isEmpty();
+    }
+
+    private void findTargetBlocks() {
+        target1 = findCityBlock(null);
+        ignorePos = target1 == null ? null : target1.blockPos;
+        target2 = findCityBlock(target1 == null ? null : target1.blockPos);
+    }
+
+    private CityBlock findCityBlock(BlockPos exclude) {
+        if (targetPlayer == null) return null;
+        AABB feetBox = targetFeetBox();
+        boolean bedrock = BlockPos.betweenClosedStream(feetBox)
+                .anyMatch(pos -> mc.level.getBlockState(pos).is(Blocks.BEDROCK));
+        Set<CheckPos> candidates = new HashSet<>();
+        if (bedrock) addBedrockCaseCheckPositions(candidates);
+        else addNormalCaseCheckPositions(candidates);
+
+        CityBlock best = new CityBlock();
+        boolean found = false;
+        for (CheckPos candidate : candidates) {
+            BlockPos pos = candidate.blockPos;
+            if (pos.equals(exclude)) continue;
+            BlockState state = mc.level.getBlockState(pos);
+            boolean goodRebreak = isGoodRebreak(pos, bedrock, feetBox);
+            if (state.isAir() && !goodRebreak) continue;
+            if (!canBreak(pos, state) && !goodRebreak) continue;
+            if (!speedMine.inBreakRange(pos)) continue;
+
+            double score = bedrock ? scoreBedrockCityBlock(candidate, feetBox)
+                    : scoreNormalCityBlock(candidate);
+            if (score == INVALID_SCORE) continue;
+            if (goodRebreak) score += 40;
+            if (score > best.score) {
+                best.score = score;
+                best.blockPos = pos;
+                best.isFeetBlock = isBlockInFeet(pos);
+                found = true;
+            }
         }
-        if (bestScore <= 0) return;
+        return found ? best : null;
+    }
 
-        for (CheckPos cp : checkPos) {
-            double s = evalCheckPos(cp, inBedrock);
-            if (s == INVALID_SCORE) continue;
-            int alpha = (int) Math.min(200, Math.max(20, 200 * (s / bestScore)));
-            RenderUtil.drawBox(event.getMatrix(), cp.blockPos, new Color(255, 40, 40, alpha), 1.0f);
+    private boolean isGoodRebreak(BlockPos pos, boolean bedrock, AABB feetBox) {
+        if (!speedMine.canRebreakRebreakBlock() || !pos.equals(speedMine.getRebreakBlockPos())) return false;
+        if (bedrock) {
+            boolean selfTrap = false;
+            for (Direction direction : HORIZONTAL) {
+                if (targetPlayer.blockPosition().above().relative(direction).equals(pos)) {
+                    selfTrap = true;
+                    break;
+                }
+            }
+            boolean canFacePlace = mc.level.getBlockState(targetPlayer.blockPosition().above()).isAir();
+            return BlockPos.betweenClosedStream(feetBox).count() == 1
+                    && (pos.equals(targetPlayer.blockPosition().above(2)) || selfTrap && canFacePlace);
+        }
+        if (pos.equals(targetPlayer.blockPosition()) || isBlockInFeet(pos)) return false;
+        for (Direction direction : HORIZONTAL) {
+            BlockPos surround = targetPlayer.blockPosition().relative(direction);
+            if (surround.equals(pos) && isCrystalBlock(surround.below())) return true;
+        }
+        return false;
+    }
+
+    private void addNormalCaseCheckPositions(Set<CheckPos> candidates) {
+        AABB feetBox = targetFeetBox();
+        for (BlockPos pos : iterate(feetBox)) candidates.add(new CheckPos(pos.immutable(), CheckPosType.Feet));
+        for (BlockPos pos : iterate(feetBox)) {
+            for (Direction direction : HORIZONTAL) {
+                candidates.add(new CheckPos(pos.relative(direction), CheckPosType.Surround));
+            }
+        }
+        candidates.add(new CheckPos(targetPlayer.blockPosition(), CheckPosType.Feet));
+
+        if (BlockPos.betweenClosedStream(feetBox).count() == 1) {
+            for (Direction direction : HORIZONTAL) {
+                switch (extendBreakMode.getValue()) {
+                    case None -> { }
+                    case Long -> candidates.add(new CheckPos(
+                            targetPlayer.blockPosition().relative(direction, 2), CheckPosType.Extend));
+                    case Corner -> candidates.add(new CheckPos(targetPlayer.blockPosition()
+                            .relative(direction).relative(getCornerPerpDir(direction)), CheckPosType.Extend));
+                }
+            }
         }
     }
 
-    private SpeedMineModule speedMine() {
-        SpeedMineModule m = Homovore.moduleManager.getModuleByClass(SpeedMineModule.class);
-        return (m != null && m.isEnabled()) ? m : null;
+    private void addBedrockCaseCheckPositions(Set<CheckPos> candidates) {
+        AABB feetBox = targetFeetBox();
+        boolean canFall = BlockPos.betweenClosedStream(feetBox)
+                .allMatch(pos -> !mc.level.getBlockState(pos.below()).is(Blocks.BEDROCK));
+        boolean canRise = BlockPos.betweenClosedStream(feetBox)
+                .allMatch(pos -> !mc.level.getBlockState(pos.above(2)).is(Blocks.BEDROCK));
+
+        for (BlockPos raw : iterate(feetBox)) {
+            BlockPos pos = raw.immutable();
+            if (canFall) candidates.add(new CheckPos(pos.below(), CheckPosType.Below));
+            if (canRise) candidates.add(new CheckPos(pos.above(2), CheckPosType.Head));
+            candidates.add(new CheckPos(pos.above(), CheckPosType.FacePlace));
+            for (Direction direction : HORIZONTAL) {
+                candidates.add(new CheckPos(pos.above().relative(direction), CheckPosType.FacePlace));
+            }
+            candidates.add(new CheckPos(pos, CheckPosType.Surround));
+            for (Direction direction : HORIZONTAL) {
+                candidates.add(new CheckPos(pos.relative(direction), CheckPosType.Surround));
+            }
+        }
+    }
+
+    private double scoreNormalCityBlock(CheckPos candidate) {
+        BlockPos pos = candidate.blockPos;
+        BlockState state = mc.level.getBlockState(pos);
+        double score = 0;
+        if (pos.equals(targetPlayer.blockPosition())) {
+            if (mc.level.getBlockState(pos.above()).is(Blocks.OBSIDIAN)) score += 100;
+            else {
+                if (state.is(Blocks.COBWEB)) return INVALID_SCORE;
+                score += 50;
+            }
+        } else {
+            BlockState selfHead = mc.level.getBlockState(mc.player.blockPosition().above());
+            if (pos.equals(mc.player.blockPosition())
+                    && (selfHead.is(Blocks.OBSIDIAN) || selfHead.is(Blocks.BEDROCK))) return INVALID_SCORE;
+            if (candidate.type == CheckPosType.Surround) {
+                score += 3;
+                for (Direction direction : HORIZONTAL) {
+                    if (!targetPlayer.blockPosition().relative(direction).equals(pos)) continue;
+                    BlockPos straight = targetPlayer.blockPosition().relative(direction, 2);
+                    BlockPos corner = targetPlayer.blockPosition().relative(direction)
+                            .relative(getCornerPerpDir(direction));
+                    if (getBlockStateIgnore(straight).isAir() && isCrystalBlock(straight.below())
+                            || getBlockStateIgnore(corner).isAir() && isCrystalBlock(corner.below())) {
+                        score += 25;
+                        break;
+                    }
+                }
+            }
+            if (candidate.type == CheckPosType.Extend) score += 20;
+        }
+        return score + 10 / targetPlayer.position().distanceTo(Vec3.atCenterOf(pos));
+    }
+
+    private double scoreBedrockCityBlock(CheckPos candidate, AABB feetBox) {
+        BlockPos pos = candidate.blockPos;
+        double score = 0;
+        if (pos.getY() == targetPlayer.getBlockY() + 2 || pos.getY() == targetPlayer.getBlockY() - 1) {
+            score += 10;
+        }
+        if (BlockPos.betweenClosedStream(feetBox).count() == 1
+                && !mc.level.getBlockState(targetPlayer.blockPosition().above()).is(Blocks.BEDROCK)) {
+            if (pos.equals(targetPlayer.blockPosition().above())) score += 20;
+            else {
+                for (Direction direction : HORIZONTAL) {
+                    if (targetPlayer.blockPosition().above().relative(direction).equals(pos)) {
+                        score += 7.5;
+                        break;
+                    }
+                }
+            }
+        }
+        return score + 10 / targetPlayer.position().distanceTo(Vec3.atCenterOf(pos));
     }
 
     private AABB targetFeetBox() {
-        AABB bb = targetPlayer.getBoundingBox().deflate(0.01, 0.1, 0.01);
+        AABB bounds = targetPlayer.getBoundingBox().deflate(0.01, 0.1, 0.01);
         double feetY = targetPlayer.getY();
-        return new AABB(bb.minX, feetY, bb.minZ, bb.maxX, feetY + 0.1, bb.maxZ);
-    }
-
-    private boolean inBedrockCase() {
-        return BlockPos.betweenClosedStream(targetFeetBox())
-                .anyMatch(bp -> mc.level.getBlockState(bp).is(Blocks.BEDROCK));
+        return new AABB(bounds.minX, feetY, bounds.minZ, bounds.maxX, feetY + 0.1, bounds.maxZ);
     }
 
     private boolean isBlockInFeet(BlockPos blockPos) {
-        AABB feetBox = targetFeetBox();
-        for (BlockPos pos : BlockPos.betweenClosed(
-                Mth.floor(feetBox.minX), Mth.floor(feetBox.minY), Mth.floor(feetBox.minZ),
-                Mth.floor(feetBox.maxX), Mth.floor(feetBox.maxY), Mth.floor(feetBox.maxZ))) {
-            if (blockPos.equals(pos)) return true;
-        }
+        for (BlockPos pos : iterate(targetFeetBox())) if (blockPos.equals(pos)) return true;
         return false;
     }
 
-    private boolean isCrystalBlock(BlockPos blockPos) {
-        BlockState s = mc.level.getBlockState(blockPos);
-        return s.is(Blocks.OBSIDIAN) || s.is(Blocks.BEDROCK);
+    private boolean isCrystalBlock(BlockPos pos) {
+        BlockState state = mc.level.getBlockState(pos);
+        return state.is(Blocks.OBSIDIAN) || state.is(Blocks.BEDROCK);
     }
 
-    private BlockState getBlockStateIgnore(BlockPos blockPos) {
-        if (blockPos == null) return Blocks.AIR.defaultBlockState();
-        if (blockPos.equals(ignorePos)) return Blocks.AIR.defaultBlockState();
-        return mc.level.getBlockState(blockPos);
+    private BlockState getBlockStateIgnore(BlockPos pos) {
+        if (pos == null || pos.equals(ignorePos)) return Blocks.AIR.defaultBlockState();
+        return mc.level.getBlockState(pos);
     }
 
-    private boolean canBreak(BlockPos pos, BlockState state) {
-        if (state.isAir()) return false;
-        if (state.is(Blocks.FIRE) || state.is(Blocks.SOUL_FIRE)) return false;
-        return state.getDestroySpeed(mc.level, pos) >= 0;
-    }
-
-    private boolean intersectsEntity(AABB box, java.util.function.Predicate<Entity> pred) {
-        for (Entity e : mc.level.getEntities((Entity) null, box)) {
-            if (pred.test(e)) return true;
-        }
-        return false;
-    }
-
-    private static Iterable<BlockPos> iterate(AABB box) {
-        return BlockPos.betweenClosed(
-                Mth.floor(box.minX), Mth.floor(box.minY), Mth.floor(box.minZ),
-                Mth.floor(box.maxX), Mth.floor(box.maxY), Mth.floor(box.maxZ));
-    }
-
-    private Direction getCornerPerpDir(Direction dir) {
-        return switch (dir) {
+    private Direction getCornerPerpDir(Direction direction) {
+        return switch (direction) {
             case NORTH -> Direction.EAST;
             case SOUTH -> Direction.WEST;
-            case EAST  -> Direction.NORTH;
-            case WEST  -> Direction.SOUTH;
-            default    -> null;
+            case EAST -> Direction.NORTH;
+            case WEST -> Direction.SOUTH;
+            default -> Direction.NORTH;
         };
     }
 
-    private void logDebugState() {
-        SpeedMineModule mine = speedMine();
-        if (targetPlayer == null) {
-            Homovore.LOGGER.info(
-                    "[AutoMine] tick={} decision={} target=none mine={} enemyBreaks={} glass[target={} attempts={}]",
-                    mc.player.tickCount, debugDecision, mine == null ? "disabled" : mine.getDebugState(),
-                    enemyBreaking.size(), glassTargetPos, glassUsedAttempts);
+    private boolean canBreak(BlockPos pos, BlockState state) {
+        return InteractionUtil.canBreak(pos, state);
+    }
+
+    private static Iterable<BlockPos> iterate(AABB box) {
+        return BlockPos.betweenClosed(Mth.floor(box.minX), Mth.floor(box.minY), Mth.floor(box.minZ),
+                Mth.floor(box.maxX), Mth.floor(box.maxY), Mth.floor(box.maxZ));
+    }
+
+    public boolean isTargetedPos(BlockPos pos) {
+        return target1 != null && target1.blockPos.equals(pos)
+                || target2 != null && target2.blockPos.equals(pos);
+    }
+
+    public boolean isTargetingAnything() {
+        return target1 != null || target2 != null;
+    }
+
+    @Override
+    public void onRender3D(Render3DEvent event) {
+        if (nullCheck()) return;
+        update();
+        logDebugState();
+        renderGlass(event);
+        if (!renderDebugScores.getValue() || targetPlayer == null || speedMine == null) return;
+
+        if (crawlTargeting) {
+            if (target1 != null) {
+                RenderUtil.drawBoxFilled(event.getMatrix(), target1.blockPos, new Color(255, 0, 0, 110));
+                RenderUtil.drawBox(event.getMatrix(), target1.blockPos, new Color(255, 255, 255, 220), 1.5f);
+            }
+            if (target2 != null) {
+                RenderUtil.drawBoxFilled(event.getMatrix(), target2.blockPos, new Color(255, 0, 0, 70));
+                RenderUtil.drawBox(event.getMatrix(), target2.blockPos, new Color(255, 255, 255, 180), 1.0f);
+            }
             return;
         }
 
-        PhaseSnapshot phase = phaseSnapshot(targetPlayer);
-        Vec3 pos = targetPlayer.position();
-        Vec3 velocity = targetPlayer.getDeltaMovement();
-        CityBlock extend = target1 != null && target1.type == CheckPosType.Extend
-                ? target1
-                : target2 != null && target2.type == CheckPosType.Extend ? target2 : null;
+        AABB feetBox = targetFeetBox();
+        boolean bedrock = BlockPos.betweenClosedStream(feetBox)
+                .anyMatch(pos -> mc.level.getBlockState(pos).is(Blocks.BEDROCK));
+        Set<CheckPos> candidates = new HashSet<>();
+        if (bedrock) addBedrockCaseCheckPositions(candidates);
+        else addNormalCaseCheckPositions(candidates);
+
+        double bestScore = 0;
+        for (CheckPos candidate : candidates) {
+            CityBlock scored = scoreDebug(candidate, bedrock, feetBox);
+            if (scored != null) bestScore = Math.max(bestScore, scored.score);
+        }
+        if (bestScore <= 0) return;
+        for (CheckPos candidate : candidates) {
+            CityBlock scored = scoreDebug(candidate, bedrock, feetBox);
+            if (scored == null) continue;
+            int alpha = (int) (255.0 * (scored.score / bestScore) / 4.0);
+            RenderUtil.drawBoxFilled(event.getMatrix(), candidate.blockPos,
+                    new Color(255, 0, 0, Mth.clamp(alpha, 0, 255)));
+        }
+    }
+
+    private void logDebugState() {
+        if (!debugLog.getValue() || mc.player.tickCount == lastDebugTick) return;
+        lastDebugTick = mc.player.tickCount;
+
+        if (targetPlayer == null) {
+            Homovore.LOGGER.info("[AutoMine] tick={} target=none decision=no_target active={}",
+                    mc.player.tickCount, speedMine == null ? "unavailable" : speedMine.getDebugState());
+            return;
+        }
+
         Homovore.LOGGER.info(
-                "[AutoMine] tick={} decision={} target={} pose={} pos=({},{},{}) vel=({},{},{}) speed={} "
-                        + "flags[ground={},crawl={},swim={},sneak={},elytra={}] phase={} phasedCells={} cells={} "
-                        + "mode[bedrock={},terrain={},priority={},extend={}] selected[first={},second={},extendTarget={}] "
-                        + "mine={} glass[target={} attempts={} items={}] enemyBreaks={}",
-                mc.player.tickCount, debugDecision, targetPlayer.getName().getString(), targetPlayer.getPose(),
-                format(pos.x), format(pos.y), format(pos.z),
-                format(velocity.x), format(velocity.y), format(velocity.z), format(velocity.length()),
-                targetPlayer.onGround(), targetPlayer.isVisuallyCrawling(), targetPlayer.isSwimming(),
-                targetPlayer.isCrouching(), targetPlayer.isFallFlying(), !phase.cells.isEmpty(),
-                phase.cells.size(), phase.cells, inBedrockCase(), isTerrainFight,
-                targetPriority.getValue(), extendBreakMode.getValue(), describeTarget(target1),
-                describeTarget(target2), describeTarget(extend), mine == null ? "disabled" : mine.getDebugState(),
-                glassTargetPos, glassUsedAttempts, glassTargetPos == null ? 0 : countItems(glassTargetPos),
-                enemyBreaking.size());
+                "[AutoMine] tick={} target={} pos={} yaw={} pose={} crawl={} crawlMode={} "
+                        + "phase={}/{} decision={} selected[delayed={},rebreak={}] rebreakDamage={} active={}",
+                mc.player.tickCount, targetPlayer.getName().getString(), targetPlayer.position(),
+                String.format(java.util.Locale.ROOT, "%.1f", targetPlayer.getYRot()), targetPlayer.getPose(),
+                targetPlayer.isVisuallyCrawling(), crawlTargeting, crawlPhasedCells, crawlHitboxCells,
+                crawlDecision, target1 == null ? "none" : target1.blockPos,
+                target2 == null ? "none" : target2.blockPos,
+                String.format(java.util.Locale.ROOT, "%.2f", crawlRebreakDamage),
+                speedMine == null ? "unavailable" : speedMine.getDebugState());
     }
 
-    private PhaseSnapshot phaseSnapshot(Player player) {
-        AABB box = player.getBoundingBox().deflate(1.0E-4);
-        List<BlockPos> cells = new ArrayList<>();
-        for (BlockPos raw : BlockPos.betweenClosed(
-                Mth.floor(box.minX), Mth.floor(box.minY), Mth.floor(box.minZ),
-                Mth.floor(box.maxX), Mth.floor(box.maxY), Mth.floor(box.maxZ))) {
-            BlockPos blockPos = raw.immutable();
-            BlockState state = mc.level.getBlockState(blockPos);
-            if (state.getCollisionShape(mc.level, blockPos).toAabbs().stream()
-                    .map(shape -> shape.move(blockPos.getX(), blockPos.getY(), blockPos.getZ()))
-                    .anyMatch(shape -> shape.intersects(box))) {
-                cells.add(blockPos);
-            }
-        }
-        return new PhaseSnapshot(cells);
-    }
-
-    private int countItems(BlockPos airPos) {
-        int count = 0;
-        AABB box = new AABB(airPos).expandTowards(0, 1, 0);
-        for (Entity entity : mc.level.getEntities((Entity) null, box)) {
-            if (entity instanceof ItemEntity) count++;
-        }
-        return count;
-    }
-
-    private static String describeTarget(CityBlock target) {
-        if (target == null) return "none";
-        return target.blockPos + "/" + target.type + "/score=" + format(target.score)
-                + "/feet=" + target.isFeetBlock;
-    }
-
-    private static String format(double value) {
-        return String.format(Locale.ROOT, "%.3f", value);
+    private CityBlock scoreDebug(CheckPos candidate, boolean bedrock, AABB feetBox) {
+        BlockState state = mc.level.getBlockState(candidate.blockPos);
+        boolean goodRebreak = isGoodRebreak(candidate.blockPos, bedrock, feetBox);
+        if (state.isAir() && !goodRebreak) return null;
+        if (!canBreak(candidate.blockPos, state) && !goodRebreak) return null;
+        if (!speedMine.inBreakRange(candidate.blockPos)) return null;
+        double score = bedrock ? scoreBedrockCityBlock(candidate, feetBox) : scoreNormalCityBlock(candidate);
+        if (score == INVALID_SCORE) return null;
+        CityBlock result = new CityBlock();
+        result.score = score + (goodRebreak ? 40 : 0);
+        return result;
     }
 
     @Override
     public String getDisplayInfo() {
-        return targetPlayer != null ? targetPlayer.getName().getString() : null;
+        return targetPlayer == null ? null : targetPlayer.getName().getString();
     }
 
-    private static class CityBlock {
-        BlockPos blockPos;
-        double score;
-        boolean isFeetBlock = false;
-        CheckPosType type;
+    private static final class CityBlock {
+        private BlockPos blockPos;
+        private double score;
+        private boolean isFeetBlock;
     }
 
-    private record PhaseSnapshot(List<BlockPos> cells) {}
-
-    private static final class CheckPos {
-        final BlockPos blockPos;
-        final CheckPosType type;
-
-        CheckPos(BlockPos blockPos, CheckPosType type) {
-            this.blockPos = blockPos;
-            this.type = type;
-        }
-
+    private record CheckPos(BlockPos blockPos, CheckPosType type) {
         @Override
         public int hashCode() {
-            return blockPos.hashCode() * 31 + type.ordinal();
+            return blockPos.hashCode();
         }
 
         @Override
-        public boolean equals(Object o) {
-            return o instanceof CheckPos other
-                    && other.type == type && other.blockPos.equals(blockPos);
+        public boolean equals(Object object) {
+            return object instanceof CheckPos other && blockPos.equals(other.blockPos);
         }
     }
 
-    private enum CheckPosType { Feet, Surround, Extend, FacePlace, Head, Below, TerrainBase }
+    private record CrawlPair(BlockPos first, BlockPos second) {
+    }
 
-    public enum SortPriority { Angle, Distance }
-
-    private enum AntiSwimMode { None, Always, Mine, MineOrSwim }
-
+    private enum CheckPosType { Feet, Surround, Extend, FacePlace, Head, Below }
     private enum AntiSurroundMode { None, Inner, Outer, Auto }
-
     private enum ExtendBreakMode { None, Long, Corner }
+    private enum SortPriority { Distance, Angle }
 }

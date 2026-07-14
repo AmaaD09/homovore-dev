@@ -749,7 +749,6 @@ public class SurroundModule extends Module {
 
         if (!canRocket(pos, now)) return false;
         if (speedMineClaims(pos)) return false;
-
         fireworkPoses.add(pos.immutable());
         out.add(pos);
         return true;

@@ -568,7 +568,6 @@ public class AutoCrystalModule extends Module {
 
         ageCrystalPlaces();
         updateSeeThrough();
-
         boolean antiChineseReady = antiChinese.getValue()
                 && enemyNearby(antiChineseEnemyRange.getValue());
 
@@ -807,6 +806,15 @@ public class AutoCrystalModule extends Module {
         diagBreakSent++;
         mc.gameMode.attack(mc.player, crystal);
         return true;
+    }
+
+    public boolean breakCrystalAt(BlockPos airPos) {
+        if (nullCheck() || airPos == null) return false;
+        AABB search = new AABB(airPos).inflate(1.0);
+        for (EndCrystal crystal : mc.level.getEntitiesOfClass(EndCrystal.class, search)) {
+            if (crystal.blockPosition().equals(airPos) && breakCrystal(crystal)) return true;
+        }
+        return false;
     }
 
     private boolean canBreakCrystal(EndCrystal crystal, float yaw, float pitch) {

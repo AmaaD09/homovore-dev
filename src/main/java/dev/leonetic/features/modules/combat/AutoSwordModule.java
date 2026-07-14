@@ -142,7 +142,7 @@ public class AutoSwordModule extends Module {
 
         SwapManager.SwapHandle handle = null;
         if (needSwap) {
-            handle = Homovore.swapManager.acquire("AutoSword", 70);
+            handle = Homovore.swapManager.acquire("AutoSword", 66);
             if (handle == null) return;
         }
 
